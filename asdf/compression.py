@@ -98,7 +98,7 @@ class BloscCompressor:
         blosc.set_nthreads(nthreads)
         blosc.set_blocksize(blocksize)
 
-        print(f'blosc configured with typesize {typesize}, shuffle {shuffle}, blocksize {blocksize/(1<<20):.2f} MB')
+        #print(f'blosc configured with typesize {typesize}, shuffle {shuffle}, blocksize {blocksize/(1<<20):.2f} MB')
 
 
     def compress(self, data):
@@ -107,7 +107,6 @@ class BloscCompressor:
             raise ValueError("data blocks must be smaller than 2147483631 bytes due to internal blosc limitations")
         if self.typesize == 'auto':
             this_typesize = data.itemsize
-            print(f'Detected typesize {this_typesize}')
         else:
             this_typesize = self.typesize
         assert this_typesize != 1
@@ -213,9 +212,9 @@ def _get_decoder(compression, **kwargs):
             import blosc
         except ImportError:
             raise ImportError(
-                "blosc library not installed in your Python environment, "
-                "therefore the compressed block in this ASDF file "
-                "can not be decompressed.")
+                'blosc library not installed in your Python environment, '
+                'therefore the compressed block in this ASDF file '
+                'can not be decompressed.  Install with: "pip install python-blosc"')
         return BloscDecompressor(blosc, **kwargs)
     else:
         raise ValueError(
@@ -262,7 +261,7 @@ def _get_encoder(compression, **kwargs):
             raise ImportError(
                 "blosc library not installed in your Python environment, "
                 "therefore the block in this ASDF file "
-                "can not be compressed.")
+                'can not be compressed.  Install with: "pip install python-blosc"')
         return BloscCompressor(blosc, **kwargs)
     else:
         raise ValueError(
@@ -332,7 +331,7 @@ def decompress(fd, used_size, data_size, compression):
     assert decoder._buffer is None
     if i != data_size:
         raise ValueError("Decompressed data wrong size")
-    print(BloscDecompressor.tottime)
+    #print(BloscDecompressor.tottime)
 
     return buffer
 
