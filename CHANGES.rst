@@ -1,4 +1,4 @@
-2.6.0 (unreleased)
+2.6.0 (2020-04-22)
 ------------------
 
 - AsdfDeprecationWarning now subclasses DeprecationWarning. [#710]
@@ -11,8 +11,25 @@
 
 - Add pytest plugin option to skip warning when a tag is
   unrecognized. [#771]
-  
+
 - Fix generic_io ``read_blocks()`` reading past the requested size [#773]
+
+- Add support for ASDF Standard 1.5.0, which includes several new
+  transform schemas. [#776]
+
+- Enable validation and serialization of previously unhandled numpy
+  scalar types. [#778]
+
+- Fix handling of trees containing implicit internal references and
+  reference cycles.  Eliminate need to call ``yamlutil.custom_tree_to_tagged_tree``
+  and ``yamlutil.tagged_tree_to_custom_tree`` from extension code,
+  and allow ``ExtensionType`` subclasses to return generators. [#777]
+
+- Fix bug preventing history entries when a file was previously
+  saved without them. [#779]
+
+- Update developer overview documentation to describe design of changes
+  to handle internal references and reference cycles. [#781]
 
 2.5.2 (2020-02-28)
 ------------------
