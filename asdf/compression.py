@@ -328,7 +328,8 @@ def decompress(fd, used_size, data_size, compression):
         buffer[i:i+len(decoded)] = decoded
         i += len(decoded)
     
-    assert decoder._buffer is None
+    if hasattr(decoder, '_buffer'):
+        assert decoder._buffer is None
     if i != data_size:
         raise ValueError("Decompressed data wrong size")
     #print(BloscDecompressor.tottime)
