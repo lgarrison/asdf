@@ -2,18 +2,13 @@
 # -*- coding: utf-8 -*-
 
 
-import os
 import io
 from functools import partial
 
-import numpy as np
 import pytest
 
-from ... import AsdfFile
-from ...tests import helpers
-
-from .. import main, diff
-
+from asdf.tests import helpers
+from asdf.commands import main, diff
 from . import data as test_data
 get_test_data_path = partial(helpers.get_test_data_path, module=test_data)
 
@@ -42,7 +37,11 @@ def test_diff_minimal():
 def test_diff_block():
     filenames = ['block0.asdf', 'block1.asdf']
     result_file = 'blocks.diff'
+    _assert_diffs_equal(filenames, result_file, minimal=False)
 
+def test_diff_simple_inline_array():
+    filenames = ['simple_inline_array0.asdf', 'simple_inline_array1.asdf']
+    result_file = 'simple_inline_array.diff'
     _assert_diffs_equal(filenames, result_file, minimal=False)
 
 def test_file_not_found():

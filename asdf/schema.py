@@ -1,7 +1,6 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 # -*- coding: utf-8 -*-
 
-import os
 import json
 import datetime
 import warnings
@@ -9,7 +8,6 @@ import copy
 from numbers import Integral
 from functools import lru_cache
 from collections import OrderedDict
-from collections.abc import Mapping
 from urllib import parse as urlparse
 
 from jsonschema import validators as mvalidators
@@ -23,10 +21,8 @@ from . import generic_io
 from . import reference
 from . import treeutil
 from . import util
-from .extension import default_extensions
-from .compat.jsonschemacompat import JSONSCHEMA_LT_3
 from . import extension
-from .exceptions import AsdfDeprecationWarning
+from .exceptions import AsdfDeprecationWarning, AsdfWarning
 
 
 YAML_SCHEMA_METASCHEMA_ID = 'http://stsci.edu/schemas/yaml-schema/draft-01'
@@ -182,7 +178,7 @@ def validate_fill_default(validator, properties, instance, schema):
 
 
 FILL_DEFAULTS = util.HashableDict()
-for key in ('allOf', 'anyOf', 'oneOf', 'items'):
+for key in ('allOf', 'items'):
     FILL_DEFAULTS[key] = mvalidators.Draft4Validator.VALIDATORS[key]
 FILL_DEFAULTS['properties'] = validate_fill_default
 
@@ -202,7 +198,7 @@ def validate_remove_default(validator, properties, instance, schema):
 
 
 REMOVE_DEFAULTS = util.HashableDict()
-for key in ('allOf', 'anyOf', 'oneOf', 'items'):
+for key in ('allOf', 'items'):
     REMOVE_DEFAULTS[key] = mvalidators.Draft4Validator.VALIDATORS[key]
 REMOVE_DEFAULTS['properties'] = validate_remove_default
 
@@ -250,31 +246,22 @@ class _ValidationContext:
 
 @lru_cache()
 def _create_validator(validators=YAML_VALIDATORS, visit_repeat_nodes=False):
-    meta_schema = load_schema(YAML_SCHEMA_METASCHEMA_ID, extension.get_default_resolver())
+    meta_schema = _load_schema_cached(YAML_SCHEMA_METASCHEMA_ID, extension.get_default_resolver(), False, False)
 
-    if JSONSCHEMA_LT_3:
-        base_cls = mvalidators.create(meta_schema=meta_schema, validators=validators)
-    else:
-        type_checker = mvalidators.Draft4Validator.TYPE_CHECKER.redefine_many({
-            'array': lambda checker, instance: isinstance(instance, list) or isinstance(instance, tuple),
-            'integer': lambda checker, instance: not isinstance(instance, bool) and isinstance(instance, Integral),
-            'string': lambda checker, instance: isinstance(instance, (str, np.str_)),
-        })
-        id_of = mvalidators.Draft4Validator.ID_OF
-        base_cls = mvalidators.create(
-            meta_schema=meta_schema,
-            validators=validators,
-            type_checker=type_checker,
-            id_of=id_of
-        )
+    type_checker = mvalidators.Draft4Validator.TYPE_CHECKER.redefine_many({
+        'array': lambda checker, instance: isinstance(instance, list) or isinstance(instance, tuple),
+        'integer': lambda checker, instance: not isinstance(instance, bool) and isinstance(instance, Integral),
+        'string': lambda checker, instance: isinstance(instance, (str, np.str_)),
+    })
+    id_of = mvalidators.Draft4Validator.ID_OF
+    base_cls = mvalidators.create(
+        meta_schema=meta_schema,
+        validators=validators,
+        type_checker=type_checker,
+        id_of=id_of
+    )
 
     class ASDFValidator(base_cls):
-        if JSONSCHEMA_LT_3:
-            DEFAULT_TYPES = base_cls.DEFAULT_TYPES.copy()
-            DEFAULT_TYPES['array'] = (list, tuple)
-            DEFAULT_TYPES['integer'] = (Integral)
-            DEFAULT_TYPES['string'] = (str, np.str_)
-
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self._context = _ValidationContext()
@@ -308,10 +295,10 @@ def _create_validator(validators=YAML_VALIDATORS, visit_repeat_nodes=False):
                         schema_path = self.ctx.resolver(tag)
                         if schema_path != tag:
                             try:
-                                s = load_schema(schema_path, self.ctx.resolver)
+                                s = _load_schema_cached(schema_path, self.ctx.resolver, False, False)
                             except FileNotFoundError:
                                 msg = "Unable to locate schema file for '{}': '{}'"
-                                warnings.warn(msg.format(tag, schema_path))
+                                warnings.warn(msg.format(tag, schema_path), AsdfWarning)
                                 s = {}
                             if s:
                                 with self.resolver.in_scope(schema_path):
@@ -579,7 +566,8 @@ def validate_large_literals(instance, reading=False):
         warnings.warn(
             "Invalid integer literal value {0} detected while reading file. "
             "The value has been read safely, but the file should be "
-            "fixed.".format(instance)
+            "fixed.".format(instance),
+            AsdfWarning
         )
 
 
@@ -683,7 +671,7 @@ def check_schema(schema):
     })
 
     meta_schema_id = schema.get('$schema', YAML_SCHEMA_METASCHEMA_ID)
-    meta_schema = load_schema(meta_schema_id, extension.get_default_resolver())
+    meta_schema = _load_schema_cached(meta_schema_id, extension.get_default_resolver(), False, False)
 
     resolver = _make_resolver(extension.get_default_resolver())
 

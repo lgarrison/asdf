@@ -238,8 +238,6 @@ def test_streams2():
 
 
 @pytest.mark.remote_data
-@pytest.mark.skipif(sys.platform.startswith('win'),
-                    reason="Windows firewall prevents test")
 def test_urlopen(tree, httpserver):
     path = os.path.join(httpserver.tmpdir, 'test.asdf')
 
@@ -258,8 +256,6 @@ def test_urlopen(tree, httpserver):
 
 
 @pytest.mark.remote_data
-@pytest.mark.skipif(sys.platform.startswith('win'),
-                    reason="Windows firewall prevents test")
 def test_http_connection(tree, httpserver):
     path = os.path.join(httpserver.tmpdir, 'test.asdf')
 
@@ -283,8 +279,6 @@ def test_http_connection(tree, httpserver):
 
 
 @pytest.mark.remote_data
-@pytest.mark.skipif(sys.platform.startswith('win'),
-                    reason="Windows firewall prevents test")
 def test_http_connection_range(tree, rhttpserver):
     path = os.path.join(rhttpserver.tmpdir, 'test.asdf')
     connection = [None]
@@ -348,8 +342,6 @@ def test_exploded_filesystem_fail(tree, tmpdir):
 
 
 @pytest.mark.remote_data
-@pytest.mark.skipif(sys.platform.startswith('win'),
-                    reason="Windows firewall prevents test")
 def test_exploded_http(tree, httpserver):
     path = os.path.join(httpserver.tmpdir, 'test.asdf')
 
@@ -414,21 +406,21 @@ def test_invalid_obj(tmpdir):
     path = os.path.join(str(tmpdir), 'test.asdf')
     with generic_io.get_file(path, 'w') as fd:
         with pytest.raises(ValueError):
-            fd2 = generic_io.get_file(fd, 'r')
+            generic_io.get_file(fd, 'r')
 
     with pytest.raises(ValueError):
-        fd2 = generic_io.get_file("http://www.google.com", "w")
+        generic_io.get_file("http://www.google.com", "w")
 
     with pytest.raises(TypeError):
-        fd2 = generic_io.get_file(io.StringIO())
+        generic_io.get_file(io.StringIO())
 
     with open(path, 'rb') as fd:
         with pytest.raises(ValueError):
-            fd2 = generic_io.get_file(fd, 'w')
+            generic_io.get_file(fd, 'w')
 
     with io.open(path, 'rb') as fd:
         with pytest.raises(ValueError):
-            fd2 = generic_io.get_file(fd, 'w')
+            generic_io.get_file(fd, 'w')
 
     with generic_io.get_file(sys.__stdout__, 'w'):
         pass
@@ -772,8 +764,7 @@ def test_truncated_reader():
 
 def test_is_asdf(tmpdir):
     # test fits
-    astropy = pytest.importorskip('astropy')
-    from astropy.io import fits
+    fits = pytest.importorskip('astropy.io.fits')
 
     hdul = fits.HDUList()
     phdu= fits.PrimaryHDU()

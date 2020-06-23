@@ -1,3 +1,48 @@
+2.7.0 (unreleased)
+------------------
+
+- Improve read performance by skipping unnecessary rebuild
+  of tagged tree. [#787]
+
+- Add option to ``asdf.open`` and ``fits_embed.AsdfInFits.open``
+  that disables validation on read. [#792]
+
+- Fix bugs and code style found by adding F and W ``flake8`` checks. [#797]
+
+- Eliminate warnings in pytest plugin by using ``from_parent``
+  when available. [#799]
+
+- Prevent validation of empty tree when ``AsdfFile`` is
+  initialized. [#794]
+
+- All warnings now subclass ``asdf.exceptions.AsdfWarning``. [#804]
+
+- Improve warning message when falling back to an older schema,
+  and note that fallback behavior will be removed in 3.0. [#806]
+
+- Drop support for jsonschema 2.x. [#807]
+
+- Stop traversing oneOf and anyOf combiners when filling
+  or removing default values. [#811]
+
+2.6.1 (unreleased)
+------------------
+
+- Fix bug preventing diff of files containing ndarray-1.0.0
+  objects in simplified form. [#786]
+
+- Fix bug causing duplicate elements to appear when calling
+  ``copy.deepcopy`` on a ``TaggedList``. [#788]
+
+- Improve validator performance by skipping unnecessary step of
+  copying schema objects. [#784]
+
+- Fix bug with ``auto_inline`` option where inline blocks
+  are not converted to internal when they exceed the threshold. [#802]
+
+- Fix misinterpretation of byte order of blocks stored
+  in FITS files. [#810]
+
 2.6.0 (2020-04-22)
 ------------------
 

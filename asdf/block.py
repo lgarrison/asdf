@@ -12,7 +12,6 @@ from collections import namedtuple
 from urllib import parse as urlparse
 
 import numpy as np
-from numpy.ma.core import masked_array
 
 import yaml
 
@@ -20,7 +19,6 @@ from . import compression as mcompression
 from .compat.numpycompat import NUMPY_LT_1_7
 from . import constants
 from . import generic_io
-from . import stream
 from . import treeutil
 from . import util
 from . import yamlutil
@@ -586,9 +584,11 @@ class BlockManager:
             block.output_compression = all_array_compression
 
         auto_inline = getattr(ctx, '_auto_inline', None)
-        if auto_inline:
+        if auto_inline and block.array_storage in ['internal', 'inline']:
             if np.product(block.data.shape) < auto_inline:
                 self.set_array_storage(block, 'inline')
+            else:
+                self.set_array_storage(block, 'internal')
 
     def finalize(self, ctx):
         """
@@ -715,20 +715,6 @@ class BlockManager:
                 return self.get_external_filename(filename, i)
 
         raise ValueError("block not found.")
-
-    def _should_inline(self, array):
-
-        if not np.issubdtype(array.dtype, np.number):
-            return False
-
-        if isinstance(array, masked_array):
-            return False
-
-        # Make sure none of the values are too large to store as literals
-        if (array[~np.isnan(array)] > 2**52).any():
-            return False
-
-        return array.size <= self._inline_threshold_size
 
     def find_or_create_block_for_array(self, arr, ctx):
         """
@@ -873,7 +859,20 @@ class Block:
         return self.offset + self.header_size + self.allocated
 
     def override_byteorder(self, byteorder):
+        """
+        Hook to permit overriding the byteorder value stored in the
+        tree.  This is used to support blocks stored in FITS files.
+        """
         return byteorder
+
+    @property
+    def trust_data_dtype(self):
+        """
+        If True, ignore the datatype and byteorder fields from the
+        tree and take the data array's dtype at face value.  This
+        is used to support blocks stored in FITS files.
+        """
+        return False
 
     @property
     def array_storage(self):

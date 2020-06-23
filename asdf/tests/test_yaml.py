@@ -16,6 +16,7 @@ from asdf import tagged
 from asdf import treeutil
 from asdf import yamlutil
 from asdf.compat.numpycompat import NUMPY_LT_1_14
+from asdf.exceptions import AsdfWarning
 
 from . import helpers
 
@@ -179,13 +180,13 @@ def test_implicit_conversion_warning():
         "val": nt(1, 2, np.ones(3))
     }
 
-    with pytest.warns(UserWarning, match="Failed to serialize instance"):
-        with asdf.AsdfFile(tree) as af:
+    with pytest.warns(AsdfWarning, match="Failed to serialize instance"):
+        with asdf.AsdfFile(tree):
             pass
 
-    with pytest.warns(None) as w:
-        with asdf.AsdfFile(tree, ignore_implicit_conversion=True) as af:
-            assert len(w) == 0
+    with helpers.assert_no_warnings():
+        with asdf.AsdfFile(tree, ignore_implicit_conversion=True):
+            pass
 
 
 @pytest.mark.xfail(reason='pyyaml has a bug and does not support tuple keys')
@@ -306,6 +307,6 @@ def test_numpy_scalar(numpy_value, expected_value):
     buffer.seek(0)
 
     if isinstance(expected_value, float) and NUMPY_LT_1_14:
-        assert yamlutil.load_tree(buffer, ctx)["value"] == pytest.approx(expected_value, rel=0.001)
+        assert yamlutil.load_tree(buffer)["value"] == pytest.approx(expected_value, rel=0.001)
     else:
-        assert yamlutil.load_tree(buffer, ctx)["value"] == expected_value
+        assert yamlutil.load_tree(buffer)["value"] == expected_value

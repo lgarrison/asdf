@@ -5,11 +5,9 @@
 import io
 import os
 import time
-import re
 import copy
 import datetime
 import warnings
-import importlib
 from pkg_resources import parse_version
 
 import numpy as np
@@ -26,7 +24,7 @@ from . import version
 from . import versioning
 from . import yamlutil
 from . import _display as display
-from .exceptions import AsdfDeprecationWarning
+from .exceptions import AsdfDeprecationWarning, AsdfWarning, AsdfConversionWarning
 from .extension import AsdfExtensionList, default_extensions
 from .util import NotSet
 from .search import AsdfSearchResult
@@ -117,13 +115,17 @@ class AsdfFile(versioning.VersionedMixin):
         self._process_extensions(extensions)
 
         if custom_schema is not None:
-            self._custom_schema = schema.load_schema(custom_schema, self.resolver, True)
+            self._custom_schema = schema._load_schema_cached(custom_schema, self.resolver, True, False)
         else:
             self._custom_schema = None
 
         self._ignore_version_mismatch = ignore_version_mismatch
         self._ignore_unrecognized_tag = ignore_unrecognized_tag
         self._ignore_implicit_conversion = ignore_implicit_conversion
+
+        # Set of (string, string) tuples representing tag version mismatches
+        # that we've already warned about for this file.
+        self._warned_tag_pairs = set()
 
         self._file_format_version = None
 
@@ -140,7 +142,9 @@ class AsdfFile(versioning.VersionedMixin):
             readonly=_readonly)
         self._uri = None
         if tree is None:
-            self.tree = {}
+            # Bypassing the tree property here, to avoid validating
+            # an empty tree.
+            self._tree = AsdfObject()
         elif isinstance(tree, AsdfFile):
             if self._extensions != tree._extensions:
                 raise ValueError(
@@ -186,7 +190,7 @@ class AsdfFile(versioning.VersionedMixin):
                 if strict:
                     raise RuntimeError(fmt_msg)
                 else:
-                    warnings.warn(fmt_msg)
+                    warnings.warn(fmt_msg, AsdfWarning)
 
             elif extension.software:
                 installed = self._extension_metadata[extension.extension_class]
@@ -205,7 +209,7 @@ class AsdfFile(versioning.VersionedMixin):
                     if strict:
                         raise RuntimeError(fmt_msg)
                     else:
-                        warnings.warn(fmt_msg)
+                        warnings.warn(fmt_msg, AsdfWarning)
 
     def _process_extensions(self, extensions):
         if extensions is None or extensions == []:
@@ -241,7 +245,8 @@ class AsdfFile(versioning.VersionedMixin):
             self.tree['history'] = dict(entries=histlist, extensions=[])
             warnings.warn("The ASDF history format has changed in order to "
                           "support metadata about extensions. History entries "
-                          "should now be stored under tree['history']['entries'].")
+                          "should now be stored under tree['history']['entries'].",
+                          AsdfWarning)
         elif 'extensions' not in self.tree['history']:
             self.tree['history']['extensions'] = []
 
@@ -424,8 +429,13 @@ class AsdfFile(versioning.VersionedMixin):
         return self._comments
 
     def _validate(self, tree, custom=True, reading=False):
-        tagged_tree = yamlutil.custom_tree_to_tagged_tree(
-            tree, self)
+        if reading:
+            # If we're validating on read then the tree
+            # is already guaranteed to be in tagged form.
+            tagged_tree = tree
+        else:
+            tagged_tree = yamlutil.custom_tree_to_tagged_tree(
+                tree, self)
         schema.validate(tagged_tree, self, reading=reading)
         # Perform secondary validation pass if requested
         if custom and self._custom_schema:
@@ -605,7 +615,8 @@ class AsdfFile(versioning.VersionedMixin):
                    _get_yaml_content=False,
                    _force_raw_types=False,
                    strict_extension_check=False,
-                   ignore_missing_extensions=False):
+                   ignore_missing_extensions=False,
+                   validate_on_read=True):
         """Attempt to populate AsdfFile data from file-like object"""
 
         if strict_extension_check and ignore_missing_extensions:
@@ -633,8 +644,8 @@ class AsdfFile(versioning.VersionedMixin):
             self.version = version
 
         yaml_token = fd.read(4)
-        tree = {}
         has_blocks = False
+        tree = None
         if yaml_token == b'%YAM':
             reader = fd.reader_until(
                 constants.YAML_END_MARKER_REGEX, 7, 'End of YAML marker',
@@ -649,12 +660,19 @@ class AsdfFile(versioning.VersionedMixin):
             # We parse the YAML content into basic data structures
             # now, but we don't do anything special with it until
             # after the blocks have been read
-            tree = yamlutil.load_tree(reader, self, self._ignore_version_mismatch)
+            tree = yamlutil.load_tree(reader)
             has_blocks = fd.seek_until(constants.BLOCK_MAGIC, 4, include=True)
         elif yaml_token == constants.BLOCK_MAGIC:
             has_blocks = True
         elif yaml_token != b'':
             raise IOError("ASDF file appears to contain garbage after header.")
+
+        if tree is None:
+            # At this point the tree should be tagged, but we want it to be
+            # tagged with the core/asdf version appropriate to this file's
+            # ASDF Standard version.  We're using custom_tree_to_tagged_tree
+            # to select the correct tag for us.
+            tree = yamlutil.custom_tree_to_tagged_tree(AsdfObject(), self)
 
         if has_blocks:
             self._blocks.read_internal_blocks(
@@ -665,11 +683,12 @@ class AsdfFile(versioning.VersionedMixin):
         if not do_not_fill_defaults:
             schema.fill_defaults(tree, self, reading=True)
 
-        try:
-            self._validate(tree, reading=True)
-        except ValidationError:
-            self.close()
-            raise
+        if validate_on_read:
+            try:
+                self._validate(tree, reading=True)
+            except ValidationError:
+                self.close()
+                raise
 
         tree = yamlutil.tagged_tree_to_custom_tree(tree, self, _force_raw_types)
 
@@ -688,7 +707,8 @@ class AsdfFile(versioning.VersionedMixin):
                    _get_yaml_content=False,
                    _force_raw_types=False,
                    strict_extension_check=False,
-                   ignore_missing_extensions=False):
+                   ignore_missing_extensions=False,
+                   validate_on_read=True):
         """Attempt to open file-like object as either AsdfFile or AsdfInFits"""
         if not is_asdf_file(fd):
             try:
@@ -703,7 +723,8 @@ class AsdfFile(versioning.VersionedMixin):
                             strict_extension_check=strict_extension_check,
                             ignore_missing_extensions=ignore_missing_extensions,
                             ignore_unrecognized_tag=self._ignore_unrecognized_tag,
-                            _extension_metadata=self._extension_metadata)
+                            _extension_metadata=self._extension_metadata,
+                            validate_on_read=validate_on_read)
             except ValueError:
                 raise ValueError(
                     "Input object does not appear to be an ASDF file or a FITS with " +
@@ -719,7 +740,8 @@ class AsdfFile(versioning.VersionedMixin):
                 _get_yaml_content=_get_yaml_content,
                 _force_raw_types=_force_raw_types,
                 strict_extension_check=strict_extension_check,
-                ignore_missing_extensions=ignore_missing_extensions)
+                ignore_missing_extensions=ignore_missing_extensions,
+                validate_on_read=validate_on_read)
 
     @classmethod
     def open(cls, fd, uri=None, mode='r',
@@ -1318,6 +1340,20 @@ class AsdfFile(versioning.VersionedMixin):
         result = AsdfSearchResult(["root.tree"], self.tree)
         return result.search(key=key, type=type, value=value, filter=filter)
 
+    # This function is called from within TypeIndex when deserializing
+    # the tree for this file.  It is kept here so that we can keep
+    # state on the AsdfFile and prevent a flood of warnings for the
+    # same tag.
+    def _warn_tag_mismatch(self, tag, best_tag):
+        if not self._ignore_version_mismatch and (tag, best_tag) not in self._warned_tag_pairs:
+            message = (
+                "No explicit ExtensionType support provided for tag '{}'. "
+                "The ExtensionType subclass for tag '{}' will be used instead. "
+                "This fallback behavior will be removed in asdf 3.0."
+            ).format(tag, best_tag)
+            warnings.warn(message, AsdfConversionWarning)
+            self._warned_tag_pairs.add((tag, best_tag))
+
 
 # Inherit docstring from dictionary
 AsdfFile.keys.__doc__ = dict.keys.__doc__
@@ -1347,7 +1383,8 @@ def open_asdf(fd, uri=None, mode=None, validate_checksums=False,
               ignore_version_mismatch=True, ignore_unrecognized_tag=False,
               _force_raw_types=False, copy_arrays=False, lazy_load=True,
               custom_schema=None, strict_extension_check=False,
-              ignore_missing_extensions=False, _compat=False):
+              ignore_missing_extensions=False, validate_on_read=True,
+              _compat=False):
     """
     Open an existing ASDF file.
 
@@ -1416,6 +1453,10 @@ def open_asdf(fd, uri=None, mode=None, validate_checksums=False,
         contains metadata about extensions that are not available. Defaults
         to `False`.
 
+    validate_on_read : bool, optional
+        When `True`, validate the newly opened file against tag and custom
+        schemas.  Recommended unless the file is already known to be valid.
+
     Returns
     -------
     asdffile : AsdfFile
@@ -1442,7 +1483,8 @@ def open_asdf(fd, uri=None, mode=None, validate_checksums=False,
         do_not_fill_defaults=do_not_fill_defaults,
         _force_raw_types=_force_raw_types,
         strict_extension_check=strict_extension_check,
-        ignore_missing_extensions=ignore_missing_extensions)
+        ignore_missing_extensions=ignore_missing_extensions,
+        validate_on_read=validate_on_read)
 
 
 def is_asdf_file(fd):

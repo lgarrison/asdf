@@ -5,8 +5,6 @@
 Implementation of command for displaying differences between two ASDF files.
 """
 
-
-import os
 import sys
 from numpy import array_equal
 try:
@@ -30,8 +28,6 @@ except ImportError:
 
 import asdf
 from .main import Command
-from .. import AsdfFile
-from .. import treeutil
 from ..tagged import Tagged
 from ..util import human_list
 from ..tags.core.ndarray import NDArrayType
@@ -190,12 +186,17 @@ def print_dict_diff(diff_ctx, tree, node_list, keys, other):
 
 def compare_ndarrays(diff_ctx, array0, array1, keys):
     """Compares two ndarray objects"""
+    if isinstance(array0, list):
+        array0 = {"data": array0}
+    if isinstance(array1, list):
+        array1 = {"data": array1}
+
     ignore_keys = set(['source', 'data'])
     compare_dicts(diff_ctx, array0, array1, keys, ignore_keys)
 
     differences = []
     for field in ['shape', 'datatype']:
-        if array0[field] != array1[field]:
+        if array0.get(field) != array1.get(field):
             differences.append(field)
 
     array0 = NDArrayType.from_tree(array0, diff_ctx.asdf0)

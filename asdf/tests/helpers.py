@@ -4,6 +4,7 @@ import io
 import os
 import sys
 import warnings
+from contextlib import contextmanager
 
 try:
     from astropy.coordinates import ICRS
@@ -233,7 +234,7 @@ def _assert_roundtrip_tree(tree, tmpdir, *, asdf_check_func=None,
             asdf_check_func(ff)
 
     # Now try everything on an HTTP range server
-    if not INTERNET_OFF and not sys.platform.startswith('win'):
+    if not INTERNET_OFF:
         server = RangeHTTPServer()
         try:
             ff = AsdfFile(tree, extensions=extensions, **init_options)
@@ -367,6 +368,29 @@ def display_warnings(_warnings):
     return msg
 
 
+@contextmanager
+def assert_no_warnings(warning_class=None):
+    """
+    Assert that no warnings were emitted within the context.
+    Requires that pytest be installed.
+
+    Parameters
+    ----------
+    warning_class : type, optional
+        Assert only that no warnings of the specified class were
+        emitted.
+    """
+    import pytest
+    with pytest.warns(None) as recorded_warnings:
+        yield
+
+    if warning_class is not None:
+        assert not any(isinstance(w.message, warning_class) for w in recorded_warnings), \
+            display_warnings(recorded_warnings)
+    else:
+        assert len(recorded_warnings) == 0, display_warnings(recorded_warnings)
+
+
 def assert_extension_correctness(extension):
     """
     Assert that an ASDF extension's types are all correctly formed and
@@ -416,7 +440,7 @@ def _assert_extension_type_correctness(extension, extension_type, resolver):
 
         try:
             with generic_io.get_file(schema_location) as f:
-                schema = yaml.load(f.read())
+                schema = yaml.safe_load(f.read())
         except Exception:
             assert False, (
                 "{} supports tag, {}, ".format(extension_type.__name__, check_type.yaml_tag) +

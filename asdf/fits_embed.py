@@ -17,7 +17,6 @@ from . import generic_io
 
 try:
     from astropy.io import fits
-    from astropy.io.fits import Column, BinTableHDU
 except ImportError:
     raise ImportError("AsdfInFits requires astropy")
 
@@ -52,7 +51,19 @@ class _FitsBlock:
         return 'fits'
 
     def override_byteorder(self, byteorder):
+        # FITS data is always stored in big-endian byte order.
+        # The data array may not report big-endian, but we want
+        # the value written to the tree to match the actual
+        # byte order on disk.
         return 'big'
+
+    @property
+    def trust_data_dtype(self):
+        # astropy.io.fits returns arrays in native byte order
+        # when it has to apply scaling.  In that case, we don't
+        # want to interpret the bytes as big-endian, since astropy
+        # has already converted them properly.
+        return True
 
 
 class _EmbeddedBlockManager(block.BlockManager):
@@ -169,7 +180,8 @@ class AsdfInFits(asdf.AsdfFile):
     @classmethod
     def open(cls, fd, uri=None, validate_checksums=False, extensions=None,
              ignore_version_mismatch=True, ignore_unrecognized_tag=False,
-             strict_extension_check=False, ignore_missing_extensions=False):
+             strict_extension_check=False, ignore_missing_extensions=False,
+             validate_on_read=True):
         """Creates a new AsdfInFits object based on given input data
 
         Parameters
@@ -207,6 +219,10 @@ class AsdfInFits(asdf.AsdfFile):
             When `True`, do not raise warnings when a file is read that
             contains metadata about extensions that are not available. Defaults
             to `False`.
+
+        validate_on_read : bool, optional
+            When `True`, validate the newly opened file against tag and custom
+            schemas.  Recommended unless the file is already known to be valid.
         """
         return cls._open_impl(fd, uri=uri,
                        validate_checksums=validate_checksums,
@@ -214,13 +230,14 @@ class AsdfInFits(asdf.AsdfFile):
                        ignore_version_mismatch=ignore_version_mismatch,
                        ignore_unrecognized_tag=ignore_unrecognized_tag,
                        strict_extension_check=strict_extension_check,
-                       ignore_missing_extensions=ignore_missing_extensions)
+                       ignore_missing_extensions=ignore_missing_extensions,
+                       validate_on_read=validate_on_read)
 
     @classmethod
     def _open_impl(cls, fd, uri=None, validate_checksums=False, extensions=None,
              ignore_version_mismatch=True, ignore_unrecognized_tag=False,
              strict_extension_check=False, _extension_metadata=None,
-             ignore_missing_extensions=False):
+             ignore_missing_extensions=False, validate_on_read=True):
 
         close_hdulist = False
         if isinstance(fd, fits.hdu.hdulist.HDUList):
@@ -256,7 +273,8 @@ class AsdfInFits(asdf.AsdfFile):
             return cls._open_asdf(self, buff, uri=uri, mode='r',
                               validate_checksums=validate_checksums,
                               strict_extension_check=strict_extension_check,
-                              ignore_missing_extensions=ignore_missing_extensions)
+                              ignore_missing_extensions=ignore_missing_extensions,
+                              validate_on_read=validate_on_read)
         except RuntimeError:
             self.close()
             raise

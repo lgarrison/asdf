@@ -4,13 +4,12 @@
 Utility functions for managing tree-like data structures.
 """
 
-import inspect
 import warnings
 import types
 from contextlib import contextmanager
 
 from . import tagged
-
+from .exceptions import AsdfWarning
 
 __all__ = ["walk", "iter_tree", "walk_and_modify", "get_children", "is_container"]
 
@@ -348,7 +347,7 @@ def walk_and_modify(top, callback, ignore_implicit_conversion=False, postorder=T
             # intended to handle namedtuple and NamedTuple instances.
             if not ignore_implicit_conversion:
                 msg = "Failed to serialize instance of {}, converting to list instead"
-                warnings.warn(msg.format(type(node)))
+                warnings.warn(msg.format(type(node)), AsdfWarning)
             result = contents
 
         return result

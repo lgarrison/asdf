@@ -2,26 +2,21 @@
 # -*- coding: utf-8 -*-
 
 import io
-import re
-import warnings
 
 from jsonschema import ValidationError
-
-import yaml
-import pytest
-
 import numpy as np
 from numpy.testing import assert_array_equal
+import pytest
 
 import asdf
-from asdf import types
 from asdf import extension
 from asdf import resolver
 from asdf import schema
+from asdf import types
 from asdf import util
 from asdf import yamlutil
-
 from asdf.tests import helpers, CustomExtension
+from asdf.exceptions import AsdfWarning, AsdfConversionWarning
 
 
 class TagReferenceType(types.CustomType):
@@ -43,7 +38,7 @@ class TagReferenceType(types.CustomType):
 
 
 def test_tagging_scalars():
-    astropy = pytest.importorskip('astropy', '3.0.0')
+    pytest.importorskip('astropy', '3.0.0')
     from astropy import units as u
 
     yaml = """
@@ -276,10 +271,9 @@ custom: !<tag:nowhere.org:custom/custom-1.0.0>
     # This should cause a warning but not an error because without explicitly
     # providing an extension, our custom type will not be recognized and will
     # simply be converted to a raw type.
-    with pytest.warns(None) as warning:
+    with pytest.warns(AsdfConversionWarning, match="tag:nowhere.org:custom/custom-1.0.0"):
         with asdf.open(buff):
             pass
-    assert len(warning) == 1
 
     buff.seek(0)
     with pytest.raises(ValidationError):
@@ -365,26 +359,82 @@ def test_fill_and_remove_defaults():
     yaml = """
 custom: !<tag:nowhere.org:custom/default-1.0.0>
   b: {}
+  d: {}
+  g: {}
+  j:
+    l: 362
     """
     buff = helpers.yaml_to_asdf(yaml)
     with asdf.open(buff, extensions=[DefaultTypeExtension()]) as ff:
         assert 'a' in ff.tree['custom']
         assert ff.tree['custom']['a'] == 42
         assert ff.tree['custom']['b']['c'] == 82
+        # allOf combiner should fill defaults from all subschemas:
+        assert ff.tree['custom']['d']['e'] == 122
+        assert ff.tree['custom']['d']['f'] == 162
+        # anyOf combiners should be ignored:
+        assert 'h' not in ff.tree['custom']['g']
+        assert 'i' not in ff.tree['custom']['g']
+        # oneOf combiners should be ignored:
+        assert 'k' not in ff.tree['custom']['j']
+        assert ff.tree['custom']['j']['l'] == 362
 
     buff.seek(0)
     with asdf.open(buff, extensions=[DefaultTypeExtension()],
                             do_not_fill_defaults=True) as ff:
         assert 'a' not in ff.tree['custom']
         assert 'c' not in ff.tree['custom']['b']
+        assert 'e' not in ff.tree['custom']['d']
+        assert 'f' not in ff.tree['custom']['d']
+        assert 'h' not in ff.tree['custom']['g']
+        assert 'i' not in ff.tree['custom']['g']
+        assert 'k' not in ff.tree['custom']['j']
+        assert ff.tree['custom']['j']['l'] == 362
         ff.fill_defaults()
         assert 'a' in ff.tree['custom']
         assert ff.tree['custom']['a'] == 42
         assert 'c' in ff.tree['custom']['b']
         assert ff.tree['custom']['b']['c'] == 82
+        assert ff.tree['custom']['b']['c'] == 82
+        assert ff.tree['custom']['d']['e'] == 122
+        assert ff.tree['custom']['d']['f'] == 162
+        assert 'h' not in ff.tree['custom']['g']
+        assert 'i' not in ff.tree['custom']['g']
+        assert 'k' not in ff.tree['custom']['j']
+        assert ff.tree['custom']['j']['l'] == 362
         ff.remove_defaults()
         assert 'a' not in ff.tree['custom']
         assert 'c' not in ff.tree['custom']['b']
+        assert 'e' not in ff.tree['custom']['d']
+        assert 'f' not in ff.tree['custom']['d']
+        assert 'h' not in ff.tree['custom']['g']
+        assert 'i' not in ff.tree['custom']['g']
+        assert 'k' not in ff.tree['custom']['j']
+        assert ff.tree['custom']['j']['l'] == 362
+
+
+def test_one_of():
+    """
+    Covers https://github.com/spacetelescope/asdf/issues/809
+    """
+    class OneOfType(dict, types.CustomType):
+        name = 'one_of'
+        organization = 'nowhere.org'
+        version = (1, 0, 0)
+        standard = 'custom'
+
+    class OneOfTypeExtension(CustomExtension):
+        @property
+        def types(self):
+            return [OneOfType]
+
+    yaml = """
+one_of: !<tag:nowhere.org:custom/one_of-1.0.0>
+  value: foo
+    """
+    buff = helpers.yaml_to_asdf(yaml)
+    with asdf.open(buff, extensions=[OneOfTypeExtension()]) as ff:
+        assert ff['one_of']['value'] == 'foo'
 
 
 def test_tag_reference_validation():
@@ -514,15 +564,9 @@ def test_read_large_literal():
 
     buff = helpers.yaml_to_asdf(yaml)
 
-    with pytest.warns(UserWarning) as w:
+    with pytest.warns(AsdfWarning, match="Invalid integer literal value"):
         with asdf.open(buff) as af:
             assert af['integer'] == value
-
-        # We get two warnings: one for validation time, and one when defaults
-        # are filled. It seems like we could improve this architecture, though...
-        assert len(w) == 2
-        assert str(w[0].message).startswith('Invalid integer literal value')
-        assert str(w[1].message).startswith('Invalid integer literal value')
 
 
 def test_nested_array():
@@ -602,7 +646,7 @@ properties:
 
 
 def test_type_missing_dependencies():
-    astropy = pytest.importorskip('astropy', '3.0.0')
+    pytest.importorskip('astropy', '3.0.0')
 
     class MissingType(types.CustomType):
         name = 'missing'
@@ -622,11 +666,9 @@ custom: !<tag:nowhere.org:custom/missing-1.1.0>
   b: {foo: 42}
     """
     buff = helpers.yaml_to_asdf(yaml)
-    with pytest.warns(None) as w:
+    with pytest.warns(AsdfConversionWarning, match="Failed to convert tag:nowhere.org:custom/missing-1.1.0"):
         with asdf.open(buff, extensions=[DefaultTypeExtension()]) as ff:
             assert ff.tree['custom']['b']['foo'] == 42
-
-    assert len(w) == 1
 
 
 def test_assert_roundtrip_with_extension(tmpdir):
@@ -654,11 +696,9 @@ def test_assert_roundtrip_with_extension(tmpdir):
     def check(ff):
         assert isinstance(ff.tree['custom'], CustomType)
 
-    with pytest.warns(None) as warnings:
+    with helpers.assert_no_warnings():
         helpers.assert_roundtrip_tree(
             tree, tmpdir, extensions=[CustomTypeExtension()])
-
-    assert len(warnings) == 0, helpers.display_warnings(warnings)
 
     assert called_custom_assert_equal[0] is True
 
@@ -853,16 +893,9 @@ a: !core/doesnt_exist-1.0.0
     """
 
     buff = helpers.yaml_to_asdf(yaml)
-    with pytest.warns(None) as w:
+    with pytest.warns(AsdfWarning, match="Unable to locate schema file"):
         with asdf.open(buff) as af:
             assert str(af['a']) == 'hello'
-            # Currently there are 3 warnings since one occurs on each of the
-            # validation passes. It would be good to consolidate these
-            # eventually
-            assert len(w) == 3, helpers.display_warnings(w)
-            assert str(w[0].message).startswith("Unable to locate schema file")
-            assert str(w[1].message).startswith("Unable to locate schema file")
-            assert str(w[2].message).startswith(af['a']._tag)
 
     # This is a more realistic case since we're using an external extension
     yaml = """
@@ -871,13 +904,9 @@ a: !<tag:nowhere.org:custom/doesnt_exist-1.0.0>
   """
 
     buff = helpers.yaml_to_asdf(yaml)
-    with pytest.warns(None) as w:
+    with pytest.warns(AsdfWarning, match="Unable to locate schema file"):
         with asdf.open(buff, extensions=CustomExtension()) as af:
             assert str(af['a']) == 'hello'
-            assert len(w) == 3, helpers.display_warnings(w)
-            assert str(w[0].message).startswith("Unable to locate schema file")
-            assert str(w[1].message).startswith("Unable to locate schema file")
-            assert str(w[2].message).startswith(af['a']._tag)
 
 
 @pytest.mark.parametrize("numpy_value,valid_types", [
