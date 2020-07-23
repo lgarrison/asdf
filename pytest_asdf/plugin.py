@@ -1,5 +1,3 @@
-# Licensed under a 3-clause BSD style license - see LICENSE.rst
-# -*- coding: utf-8 -*-
 import io
 import os
 from importlib.util import find_spec
@@ -28,6 +26,12 @@ def pytest_addoption(parser):
         default=False,
     )
     parser.addini(
+        "asdf_schema_validate_default",
+        "Set to true to enable validation of the schema 'default' property",
+        type="bool",
+        default=True,
+    )
+    parser.addini(
         "asdf_schema_ignore_unrecognized_tag",
         "Set to true to disable warnings when tag serializers are missing",
         type="bool",
@@ -45,7 +49,7 @@ def pytest_addoption(parser):
 
 class AsdfSchemaFile(pytest.File):
     @classmethod
-    def from_parent(cls, parent, *, fspath, skip_examples=False,
+    def from_parent(cls, parent, *, fspath, skip_examples=False, validate_default=True,
         ignore_unrecognized_tag=False, ignore_version_mismatch=False, **kwargs):
         if hasattr(super(), "from_parent"):
             result = super().from_parent(parent, fspath=fspath, **kwargs)
@@ -53,12 +57,13 @@ class AsdfSchemaFile(pytest.File):
             result = AsdfSchemaFile(fspath, parent, **kwargs)
 
         result.skip_examples = skip_examples
+        result.validate_default = validate_default
         result.ignore_unrecognized_tag = ignore_unrecognized_tag
         result.ignore_version_mismatch = ignore_version_mismatch
         return result
 
     def collect(self):
-        yield AsdfSchemaItem.from_parent(self, self.fspath)
+        yield AsdfSchemaItem.from_parent(self, self.fspath, validate_default=self.validate_default)
         if not self.skip_examples:
             for example in self.find_examples_in_schema():
                 yield AsdfSchemaExampleItem.from_parent(
@@ -86,13 +91,14 @@ class AsdfSchemaFile(pytest.File):
 
 class AsdfSchemaItem(pytest.Item):
     @classmethod
-    def from_parent(cls, parent, schema_path, **kwargs):
+    def from_parent(cls, parent, schema_path, validate_default=True, **kwargs):
         if hasattr(super(), "from_parent"):
             result = super().from_parent(parent, name=str(schema_path), **kwargs)
         else:
             result = AsdfSchemaItem(str(schema_path), parent, **kwargs)
 
         result.schema_path = schema_path
+        result.validate_default = validate_default
         return result
 
     def runtest(self):
@@ -103,7 +109,7 @@ class AsdfSchemaItem(pytest.Item):
         schema_tree = schema.load_schema(
             self.schema_path, resolver=default_extensions.resolver,
             resolve_references=True)
-        schema.check_schema(schema_tree)
+        schema.check_schema(schema_tree, validate_default=self.validate_default)
 
 
 ASTROPY_4_0_TAGS = {
@@ -230,6 +236,7 @@ def pytest_collect_file(path, parent):
 
     skip_names = parent.config.getini('asdf_schema_skip_names')
     skip_examples = parent.config.getini('asdf_schema_skip_examples')
+    validate_default = parent.config.getini('asdf_schema_validate_default')
     ignore_unrecognized_tag = parent.config.getini('asdf_schema_ignore_unrecognized_tag')
     ignore_version_mismatch = parent.config.getini('asdf_schema_ignore_version_mismatch')
 
@@ -245,6 +252,7 @@ def pytest_collect_file(path, parent):
                 parent,
                 fspath=path,
                 skip_examples=(path.purebasename in skip_examples),
+                validate_default=validate_default,
                 ignore_unrecognized_tag=ignore_unrecognized_tag,
                 ignore_version_mismatch=ignore_version_mismatch,
             )

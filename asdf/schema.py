@@ -1,6 +1,3 @@
-# Licensed under a 3-clause BSD style license - see LICENSE.rst
-# -*- coding: utf-8 -*-
-
 import json
 import datetime
 import warnings
@@ -16,12 +13,14 @@ from jsonschema.exceptions import ValidationError
 import yaml
 import numpy as np
 
+from ._config import get_config
 from . import constants
 from . import generic_io
 from . import reference
 from . import treeutil
 from . import util
 from . import extension
+from . import yamlutil
 from .exceptions import AsdfDeprecationWarning, AsdfWarning
 
 
@@ -321,28 +320,25 @@ def _create_validator(validators=YAML_VALIDATORS, visit_repeat_nodes=False):
     return ASDFValidator
 
 
-# We want to load mappings in schema as ordered dicts
-class OrderedLoader(_yaml_base_loader):
-    def construct_yaml_map(self, node):
-        data = OrderedDict()
-        yield data
-        for key, value in self.construct_pairs(node):
-            data[key] = value
-
-
-OrderedLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
-    OrderedLoader.construct_yaml_map)
-
-
 @lru_cache()
 def _load_schema(url):
+    # Check if this is a URI provided by the new
+    # Mapping API:
+    resource_manager = get_config().resource_manager
+    if url in resource_manager:
+        content = resource_manager[url]
+        # The jsonschema metaschemas are JSON, but pyyaml
+        # doesn't mind:
+        result = yaml.load(content, Loader=yamlutil.AsdfLoader)
+        return result, url
+
+    # If not, fall back to fetching the schema the old way:
     with generic_io.get_file(url) as fd:
         if isinstance(url, str) and url.endswith('json'):
             json_data = fd.read().decode('utf-8')
             result = json.loads(json_data, object_pairs_hook=OrderedDict)
         else:
-            result = yaml.load(fd, Loader=OrderedLoader)
+            result = yaml.load(fd, Loader=yamlutil.AsdfLoader)
     return result, fd.uri
 
 
@@ -369,18 +365,6 @@ def _make_resolver(url_mapping):
     # counterintuitively makes things slower.
     return mvalidators.RefResolver(
         '', {}, cache_remote=False, handlers=handlers)
-
-
-def _load_draft4_metaschema():
-    from jsonschema import _utils
-    return _utils.load_schema('draft4')
-
-
-# This is a list of schema that we have locally on disk but require
-# special methods to obtain
-HARDCODED_SCHEMA = {
-    'http://json-schema.org/draft-04/schema': _load_draft4_metaschema
-}
 
 
 @lru_cache()
@@ -441,10 +425,7 @@ def load_schema(url, resolver=None, resolve_references=False,
 @lru_cache()
 def _load_schema_cached(url, resolver, resolve_references, resolve_local_refs):
     loader = _make_schema_loader(resolver)
-    if url in HARDCODED_SCHEMA:
-        schema = HARDCODED_SCHEMA[url]()
-    else:
-        schema, url = loader(url)
+    schema, url = loader(url)
 
     # Resolve local references
     if resolve_local_refs:
@@ -646,29 +627,40 @@ def remove_defaults(instance, ctx):
     validate(instance, ctx, validators=REMOVE_DEFAULTS)
 
 
-def check_schema(schema):
+def check_schema(schema, validate_default=True):
     """
     Check a given schema to make sure it is valid YAML schema.
+
+    Parameters
+    ----------
+    schema : dict
+        The schema object, as returned by `load_schema`.
+    validate_default : bool, optional
+        Set to `True` to validate the content of the default
+        field against the schema.
     """
-    # We also want to validate the "default" values in the schema
-    # against the schema itself.  jsonschema as a library doesn't do
-    # this on its own.
-
-    def validate_default(validator, default, instance, schema):
-        if not validator.is_type(instance, 'object'):
-            return
-
-        if 'default' in instance:
-            with instance_validator.resolver.in_scope(scope):
-                for err in instance_validator.iter_errors(
-                        instance['default'], instance):
-                    yield err
-
-    VALIDATORS = util.HashableDict(
+    validators = util.HashableDict(
         mvalidators.Draft4Validator.VALIDATORS.copy())
-    VALIDATORS.update({
-        'default': validate_default
-    })
+
+    if validate_default:
+        # The jsonschema library doesn't validate defaults
+        # on its own.
+        instance_validator = get_validator(schema)
+        instance_scope = schema.get('id', '')
+
+        def _validate_default(validator, default, instance, schema):
+            if not validator.is_type(instance, 'object'):
+                return
+
+            if 'default' in instance:
+                with instance_validator.resolver.in_scope(instance_scope):
+                    for err in instance_validator.iter_errors(
+                            instance['default'], instance):
+                        yield err
+
+        validators.update({
+            'default': _validate_default
+        })
 
     meta_schema_id = schema.get('$schema', YAML_SCHEMA_METASCHEMA_ID)
     meta_schema = _load_schema_cached(meta_schema_id, extension.get_default_resolver(), False, False)
@@ -676,10 +668,6 @@ def check_schema(schema):
     resolver = _make_resolver(extension.get_default_resolver())
 
     cls = mvalidators.create(meta_schema=meta_schema,
-                             validators=VALIDATORS)
+                             validators=validators)
     validator = cls(meta_schema, resolver=resolver)
-
-    instance_validator = mvalidators.Draft4Validator(schema, resolver=resolver)
-    scope = schema.get('id', '')
-
     validator.validate(schema, _schema=meta_schema)

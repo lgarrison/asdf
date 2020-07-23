@@ -1,6 +1,3 @@
-# Licensed under a 3-clause BSD style license - see LICENSE.rst
-# -*- coding: utf-8 -*-
-
 import io
 import os
 import re
@@ -792,7 +789,7 @@ def test_inline_shape_mismatch():
 @pytest.mark.xfail(
     reason="NDArrays with dtype=object are not currently supported")
 def test_simple_object_array(tmpdir):
-    # See https://github.com/spacetelescope/asdf/issues/383 for feature
+    # See https://github.com/asdf-format/asdf/issues/383 for feature
     # request
     dictdata = np.empty((3, 3), dtype=object)
     for i, _ in enumerate(dictdata.flat):
@@ -804,7 +801,7 @@ def test_simple_object_array(tmpdir):
 @pytest.mark.xfail(
     reason="NDArrays with dtype=object are not currently supported")
 def test_tagged_object_array(tmpdir):
-    # See https://github.com/spacetelescope/asdf/issues/383 for feature
+    # See https://github.com/asdf-format/asdf/issues/383 for feature
     # request
     quantity = pytest.importorskip('astropy.units.quantity')
 
@@ -818,6 +815,21 @@ def test_tagged_object_array(tmpdir):
 def test_broadcasted_array(tmpdir):
     attrs = np.broadcast_arrays(np.array([10,20]), np.array(10), np.array(10))
     tree = {'one': attrs[1] }#, 'two': attrs[1], 'three': attrs[2]}
+    helpers.assert_roundtrip_tree(tree, tmpdir)
+
+
+def test_broadcasted_offset_array(tmpdir):
+    base = np.arange(10)
+    offset = base[5:]
+    broadcasted = np.broadcast_to(offset, (4, 5))
+    tree = {'broadcasted': broadcasted}
+    helpers.assert_roundtrip_tree(tree, tmpdir)
+
+
+def test_non_contiguous_base_array(tmpdir):
+    base = np.arange(60).reshape(5, 4, 3).transpose(2, 0, 1) * 1
+    contiguous = base.transpose(1, 2, 0)
+    tree = {'contiguous': contiguous}
     helpers.assert_roundtrip_tree(tree, tmpdir)
 
 

@@ -1,6 +1,3 @@
-# Licensed under a 3-clause BSD style license - see LICENSE.rst
-# -*- coding: utf-8 -*-
-
 import io
 
 from jsonschema import ValidationError
@@ -9,12 +6,14 @@ from numpy.testing import assert_array_equal
 import pytest
 
 import asdf
+from asdf import get_config
 from asdf import extension
 from asdf import resolver
 from asdf import schema
 from asdf import types
 from asdf import util
 from asdf import yamlutil
+from asdf import tagged
 from asdf.tests import helpers, CustomExtension
 from asdf.exceptions import AsdfWarning, AsdfConversionWarning
 
@@ -63,7 +62,7 @@ def test_read_json_schema():
     """Pytest to make sure reading JSON schemas succeeds.
 
     This was known to fail on Python 3.5 See issue #314 at
-    https://github.com/spacetelescope/asdf/issues/314 for more details.
+    https://github.com/asdf-format/asdf/issues/314 for more details.
     """
     json_schema = helpers.get_test_data_path('example_schema.json')
     schema_tree = schema.load_schema(json_schema, resolve_references=True)
@@ -184,6 +183,24 @@ def test_asdf_file_resolver_hashing():
 
     assert hash(a1.resolver) == hash(a2.resolver)
     assert a1.resolver == a2.resolver
+
+
+def test_load_schema_from_resource_mapping():
+    content = """
+id: http://somewhere.org/schemas/razmataz-1.0.0
+type: object
+properties:
+  foo:
+    type: string
+  bar:
+    type: boolean
+""".encode("utf-8")
+
+    get_config().add_resource_mapping({"http://somewhere.org/schemas/razmataz-1.0.0": content})
+
+    s = schema.load_schema("http://somewhere.org/schemas/razmataz-1.0.0")
+
+    assert s["id"] == "http://somewhere.org/schemas/razmataz-1.0.0"
 
 
 def test_flow_style():
@@ -343,6 +360,32 @@ def test_default_check_in_schema():
     with pytest.raises(ValidationError):
         schema.check_schema(s)
 
+    schema.check_schema(s, validate_default=False)
+
+
+def test_check_complex_default():
+    default_software = tagged.TaggedDict(
+        {"name": "asdf", "version": "2.7.0"},
+        "tag:stsci.edu/asdf/core/software-1.0.0"
+    )
+
+    s = {
+        'type': 'object',
+        'properties': {
+            'a': {
+                'type': 'object',
+                'tag': 'tag:stsci.edu/asdf/core/software-1.0.0',
+                'default': default_software
+            }
+        }
+    }
+
+    schema.check_schema(s)
+
+    s['properties']['a']['tag'] = 'tag:stsci.edu/asdf/core/ndarray-1.0.0'
+    with pytest.raises(ValidationError):
+        schema.check_schema(s)
+
 
 def test_fill_and_remove_defaults():
     class DefaultType(dict, types.CustomType):
@@ -415,7 +458,7 @@ custom: !<tag:nowhere.org:custom/default-1.0.0>
 
 def test_one_of():
     """
-    Covers https://github.com/spacetelescope/asdf/issues/809
+    Covers https://github.com/asdf-format/asdf/issues/809
     """
     class OneOfType(dict, types.CustomType):
         name = 'one_of'
@@ -750,7 +793,7 @@ def test_custom_validation_pathlib(tmpdir):
     """
     Make sure custom schema paths can be pathlib.Path objects
 
-    See https://github.com/spacetelescope/asdf/issues/653 for discussion.
+    See https://github.com/asdf-format/asdf/issues/653 for discussion.
     """
     from pathlib import Path
 

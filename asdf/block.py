@@ -1,6 +1,3 @@
-# Licensed under a 3-clause BSD style license - see LICENSE.rst
-# -*- coding: utf-8 -*-
-
 import copy
 import hashlib
 import io
@@ -793,13 +790,7 @@ class Block:
 
     def __init__(self, data=None, uri=None, array_storage='internal',
                  memmap=True, lazy_load=True):
-        if isinstance(data, np.ndarray) and not data.flags.c_contiguous:
-            if data.flags.f_contiguous:
-                self._data = np.asfortranarray(data)
-            else:
-                self._data = np.ascontiguousarray(data)
-        else:
-            self._data = data
+        self._data = data
         self._uri = uri
         self._array_storage = array_storage
 
@@ -919,7 +910,7 @@ class Block:
 
     def _calculate_checksum(self, data):
         m = hashlib.new('md5')
-        m.update(self.data.flatten())
+        m.update(self.data.ravel('K'))
         return m.digest()
 
     def validate_checksum(self):

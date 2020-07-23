@@ -1,5 +1,3 @@
-# Licensed under a 3-clause BSD style license - see LICENSE.rst
-# -*- coding: utf-8 -*-
 """
 This provides abstractions around a number of different file and
 stream types available to Python so that they are always used in the
@@ -95,7 +93,7 @@ size : integer
 
 
 def _array_tofile_chunked(write, array, chunksize):  # pragma: no cover
-    array = array.view(np.uint8).flatten()
+    array = array.view(np.uint8)
     for i in range(0, array.nbytes, chunksize):
         write(array[i:i + chunksize].data)
 
@@ -372,7 +370,7 @@ class GenericFile(metaclass=util.InheritDocstrings):
     """
 
     def write_array(self, array):
-        _array_tofile(None, self.write, array.ravel(order='A'))
+        _array_tofile(None, self.write, array.ravel(order='K'))
 
     def seek(self, offset, whence=0):
         """
@@ -751,7 +749,7 @@ class RealFile(RandomAccessFile):
             arr.flush()
             self.fast_forward(len(arr.data))
         else:
-            _array_tofile(self._fd, self._fd.write, arr.ravel(order='A'))
+            _array_tofile(self._fd, self._fd.write, arr.ravel(order='K'))
 
     def can_memmap(self):
         return True

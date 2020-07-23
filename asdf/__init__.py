@@ -1,7 +1,3 @@
-# Licensed under a 3-clause BSD style license - see LICENSE.rst
-# -*- coding: utf-8 -*-
-
-
 """
 asdf: Python library for reading and writing Advanced Scientific
 Data Format (ASDF) files
@@ -16,7 +12,7 @@ from ._internal_init import __version__, __githash__, test
 __all__ = [
     'AsdfFile', 'CustomType', 'AsdfExtension', 'Stream', 'open', 'test',
     'commands', 'IntegerType', 'ExternalArrayReference', 'info', '__version__',
-    '__githash__', 'ValidationError'
+    '__githash__', 'ValidationError', 'get_config', 'config_context',
 ]
 
 
@@ -28,6 +24,7 @@ from . import commands
 from .tags.core import IntegerType
 from .tags.core.external_reference import ExternalArrayReference
 from ._convenience import info
+from ._config import get_config, config_context
 
 from jsonschema import ValidationError
 

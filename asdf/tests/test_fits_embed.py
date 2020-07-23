@@ -1,7 +1,3 @@
-# Licensed under a 3-clause BSD style license - see LICENSE.rst
-# -*- coding: utf-8 -*-
-
-
 import copy
 import os
 import pytest
@@ -16,6 +12,7 @@ from astropy.table import Table
 from jsonschema.exceptions import ValidationError
 
 import asdf
+from asdf import get_config
 from asdf import fits_embed
 from asdf import open as asdf_open
 from asdf.exceptions import AsdfWarning, AsdfConversionWarning
@@ -96,12 +93,12 @@ def test_embed_asdf_in_fits_file(tmpdir, backwards_compat, dtype):
         assert [x.name for x in hdulist2] == ['SCI', 'DQ', 'WITH_UNDERSCORE', 'ASDF']
         assert_array_equal(hdulist2[0].data, np.arange(512, dtype=dtype))
         asdf_hdu = hdulist2['ASDF']
-        assert asdf_hdu.data.tostring().startswith(b'#ASDF')
+        assert asdf_hdu.data.tobytes().startswith(b'#ASDF')
         # When in backwards compatibility mode, the ASDF file will be contained
         # in an ImageHDU
         if backwards_compat:
             assert isinstance(asdf_hdu, fits.ImageHDU)
-            assert asdf_hdu.data.tostring().strip().endswith(b'...')
+            assert asdf_hdu.data.tobytes().strip().endswith(b'...')
         else:
             assert isinstance(asdf_hdu, fits.BinTableHDU)
 
@@ -129,7 +126,7 @@ def test_embed_asdf_in_fits_file_anonymous_extensions(tmpdir, dtype):
         assert [x.name for x in hdulist] == ['PRIMARY', '', '', 'ASDF']
         asdf_hdu = hdulist['ASDF']
         assert isinstance(asdf_hdu, fits.BinTableHDU)
-        assert asdf_hdu.data.tostring().startswith(b'#ASDF')
+        assert asdf_hdu.data.tobytes().startswith(b'#ASDF')
 
         with fits_embed.AsdfInFits.open(hdulist) as ff2:
             assert_tree_match(asdf_in_fits.tree, ff2.tree)
@@ -195,7 +192,7 @@ def test_access_hdu_data_after_write(tmpdir, dtype):
     asdf_in_fits.write_to(tempfile)
     asdf_hdu = asdf_in_fits._hdulist['ASDF']
 
-    assert asdf_hdu.data.tostring().startswith('#ASDF')
+    assert asdf_hdu.data.tobytes().startswith('#ASDF')
 
 
 @pytest.mark.parametrize('dtype', TEST_DTYPES)
@@ -323,10 +320,12 @@ invalid_software: !core/software-1.0.0
 
     for open_method in [asdf.open, fits_embed.AsdfInFits.open]:
         with pytest.raises(ValidationError):
-            with open_method(tmpfile, validate_on_read=True):
+            get_config().validate_on_read = True
+            with open_method(tmpfile):
                 pass
 
-        with open_method(tmpfile, validate_on_read=False) as af:
+        get_config().validate_on_read = False
+        with open_method(tmpfile) as af:
             assert af["invalid_software"]["name"] == "Minesweeper"
             assert af["invalid_software"]["version"] == 3
 

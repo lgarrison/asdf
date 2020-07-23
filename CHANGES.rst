@@ -1,5 +1,31 @@
+2.8.0 (unreleased)
+------------------
+
+- Add new Mapping API for extending asdf with additional
+  schemas. [#819]
+
+- Add global configuration mechanism. [#819]
+
+- Drop support for automatic serialization of subclass
+  attributes. [#825]
+
 2.7.0 (unreleased)
 ------------------
+
+- Fix bug preventing diff of files containing ndarray-1.0.0
+  objects in simplified form. [#786]
+
+- Fix bug causing duplicate elements to appear when calling
+  ``copy.deepcopy`` on a ``TaggedList``. [#788]
+
+- Improve validator performance by skipping unnecessary step of
+  copying schema objects. [#784]
+
+- Fix bug with ``auto_inline`` option where inline blocks
+  are not converted to internal when they exceed the threshold. [#802]
+
+- Fix misinterpretation of byte order of blocks stored
+  in FITS files. [#810]
 
 - Improve read performance by skipping unnecessary rebuild
   of tagged tree. [#787]
@@ -25,23 +51,23 @@
 - Stop traversing oneOf and anyOf combiners when filling
   or removing default values. [#811]
 
-2.6.1 (unreleased)
-------------------
+- Fix bug in version map caching that caused incompatible
+  tags to be written under ASDF Standard 1.0.0. [#821]
 
-- Fix bug preventing diff of files containing ndarray-1.0.0
-  objects in simplified form. [#786]
+- Fix bug that corrupted ndarrays when the underlying block
+  array was converted to C order on write. [#827]
 
-- Fix bug causing duplicate elements to appear when calling
-  ``copy.deepcopy`` on a ``TaggedList``. [#788]
+- Fix bug that produced unreadable ASDF files when an
+  ndarray in the tree was both offset and broadcasted. [#827]
 
-- Improve validator performance by skipping unnecessary step of
-  copying schema objects. [#784]
+- Fix bug preventing validation of default values in
+  ``schema.check_schema``. [#785]
 
-- Fix bug with ``auto_inline`` option where inline blocks
-  are not converted to internal when they exceed the threshold. [#802]
+- Add option to disable validation of schema default values
+  in the pytest plugin. [#831]
 
-- Fix misinterpretation of byte order of blocks stored
-  in FITS files. [#810]
+- Prevent errors when extension metadata contains additional
+  properties. [#832]
 
 2.6.0 (2020-04-22)
 ------------------
