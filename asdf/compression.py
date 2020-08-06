@@ -126,6 +126,7 @@ class BloscDecompressor:
 
     def decompress_into(self, data, out):
         bytesout = 0
+        data = memoryview(data)  # don't copy on slice
         while len(data):
             if not self._size:
                 # Don't know the (compressed) length of this block yet
@@ -157,19 +158,17 @@ class BloscDecompressor:
             
                 if self._pos == self._size:
                     start = time.perf_counter()
-                    thisout = self.blosc.decompress(self._buffer)  # TODO: could avoid copy if we change the blosc API to accept an output destination
+                    n_thisout = self.blosc.decompress_ptr(memoryview(self._buffer), out.ctypes.data + bytesout)
                     BloscDecompressor.tottime += time.perf_counter() - start
-                    out[bytesout:bytesout+len(thisout)] = np.frombuffer(thisout, dtype=np.byte)
-                    bytesout += len(thisout)
+                    bytesout += n_thisout
                     self._buffer = None
                     self._size = 0
             else:
                 # We have at least one full block
                 start = time.perf_counter()
-                thisout = self.blosc.decompress(data[:self._size])
+                n_thisout = self.blosc.decompress_ptr(memoryview(data[:self._size]), out.ctypes.data + bytesout)
                 BloscDecompressor.tottime += time.perf_counter() - start
-                out[bytesout:bytesout+len(thisout)] = np.frombuffer(thisout, dtype=np.byte)
-                bytesout += len(thisout)
+                bytesout += n_thisout
                 data = data[self._size:]
                 self._size = 0
 
