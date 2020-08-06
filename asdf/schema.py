@@ -13,7 +13,7 @@ from jsonschema.exceptions import ValidationError
 import yaml
 import numpy as np
 
-from ._config import get_config
+from .config import get_config
 from . import constants
 from . import generic_io
 from . import reference
@@ -322,17 +322,6 @@ def _create_validator(validators=YAML_VALIDATORS, visit_repeat_nodes=False):
 
 @lru_cache()
 def _load_schema(url):
-    # Check if this is a URI provided by the new
-    # Mapping API:
-    resource_manager = get_config().resource_manager
-    if url in resource_manager:
-        content = resource_manager[url]
-        # The jsonschema metaschemas are JSON, but pyyaml
-        # doesn't mind:
-        result = yaml.load(content, Loader=yamlutil.AsdfLoader)
-        return result, url
-
-    # If not, fall back to fetching the schema the old way:
     with generic_io.get_file(url) as fd:
         if isinstance(url, str) and url.endswith('json'):
             json_data = fd.read().decode('utf-8')
@@ -344,6 +333,17 @@ def _load_schema(url):
 
 def _make_schema_loader(resolver):
     def load_schema(url):
+        # Check if this is a URI provided by the new
+        # Mapping API:
+        resource_manager = get_config().resource_manager
+        if url in resource_manager:
+            content = resource_manager[url]
+            # The jsonschema metaschemas are JSON, but pyyaml
+            # doesn't mind:
+            result = yaml.load(content, Loader=yamlutil.AsdfLoader)
+            return result, url
+
+        # If not, fall back to fetching the schema the old way:
         url = resolver(str(url))
         return _load_schema(url)
     return load_schema
@@ -454,7 +454,7 @@ def _load_schema_cached(url, resolver, resolve_references, resolve_local_refs):
                 else:
                     suburl_path = suburl
                 suburl_path = resolver(suburl_path)
-                if suburl_path == url:
+                if suburl_path == url or suburl_path == schema.get("id"):
                     subschema = schema
                 else:
                     subschema = load_schema(suburl_path, resolver, True)
@@ -511,7 +511,7 @@ def get_validator(schema={}, ctx=None, validators=None, url_mapping=None,
 
     if validators is None:
         validators = util.HashableDict(YAML_VALIDATORS.copy())
-        validators.update(ctx._extensions.validators)
+        validators.update(ctx.extension_list.validators)
 
     kwargs['resolver'] = _make_resolver(url_mapping)
 

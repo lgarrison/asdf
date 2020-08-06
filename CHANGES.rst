@@ -1,15 +1,17 @@
 2.8.0 (unreleased)
 ------------------
 
-- Add new Mapping API for extending asdf with additional
-  schemas. [#819]
+- Add new resource mapping API for extending asdf with additional
+  schemas. [#819, #828, #843, #846]
 
-- Add global configuration mechanism. [#819]
+- Add global configuration mechanism. [#819, #839, #844, #847]
 
 - Drop support for automatic serialization of subclass
   attributes. [#825]
 
-2.7.0 (unreleased)
+- Support asdf:// as a URI scheme. [#854]
+
+2.7.0 (2020-07-23)
 ------------------
 
 - Fix bug preventing diff of files containing ndarray-1.0.0

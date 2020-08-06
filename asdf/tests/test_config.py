@@ -1,8 +1,12 @@
 import threading
 
+import pytest
+
 import asdf
 from asdf import get_config
 from asdf import resource
+from asdf.resource import ResourceMappingProxy
+from asdf.extension import BuiltinExtension, ExtensionProxy
 
 
 def test_config_context():
@@ -69,11 +73,21 @@ def test_global_config():
 
 def test_validate_on_read():
     with asdf.config_context() as config:
-        assert config.validate_on_read == asdf._config.DEFAULT_VALIDATE_ON_READ
+        assert config.validate_on_read == asdf.config.DEFAULT_VALIDATE_ON_READ
         config.validate_on_read = False
         assert get_config().validate_on_read is False
         config.validate_on_read = True
         assert get_config().validate_on_read is True
+
+
+def test_default_version():
+    with asdf.config_context() as config:
+        assert config.default_version == asdf.config.DEFAULT_DEFAULT_VERSION
+        assert "1.2.0" != asdf.config.DEFAULT_DEFAULT_VERSION
+        config.default_version = "1.2.0"
+        assert config.default_version == "1.2.0"
+        with pytest.raises(ValueError):
+            config.default_version = "0.1.5"
 
 
 def test_resource_mappings():
@@ -87,28 +101,136 @@ def test_resource_mappings():
         config.add_resource_mapping(new_mapping)
 
         assert len(config.resource_mappings) == len(default_mappings) + 1
-        assert new_mapping in config.resource_mappings
+        assert any(m for m in config.resource_mappings if m.delegate is new_mapping)
 
+        # Adding a mapping should be idempotent:
+        config.add_resource_mapping(new_mapping)
+        # ... even if wrapped:
+        config.add_resource_mapping(ResourceMappingProxy(new_mapping))
+        assert len(config.resource_mappings) == len(default_mappings) + 1
+
+        # Adding a mapping should place it at the front of the line:
+        front_mapping = {"http://somewhere.org/schemas/baz-1.0.0": b"baz"}
+        config.add_resource_mapping(front_mapping)
+        assert len(config.resource_mappings) == len(default_mappings) + 2
+        assert config.resource_mappings[0].delegate is front_mapping
+
+        # ... even if the mapping is already in the list:
+        config.add_resource_mapping(new_mapping)
+        assert len(config.resource_mappings) == len(default_mappings) + 2
+        assert config.resource_mappings[0].delegate is new_mapping
+
+        # Reset should get rid of any additions:
         config.reset_resources()
+        assert len(config.resource_mappings) == len(default_mappings)
 
+        # Should be able to remove a mapping:
+        config.add_resource_mapping(new_mapping)
+        config.remove_resource_mapping(new_mapping)
+        assert len(config.resource_mappings) == len(default_mappings)
+
+        # ... even if wrapped:
+        config.add_resource_mapping(new_mapping)
+        config.remove_resource_mapping(ResourceMappingProxy(new_mapping))
+        assert len(config.resource_mappings) == len(default_mappings)
+
+        # ... and also by the name of the package the mappings came from:
+        config.add_resource_mapping(ResourceMappingProxy(new_mapping, package_name="foo"))
+        config.add_resource_mapping(ResourceMappingProxy({"http://somewhere.org/schemas/bar-1.0.0": b"bar"}, package_name="foo"))
+        config.remove_resource_mapping(package="foo")
+        assert len(config.resource_mappings) == len(default_mappings)
+
+        # Removing a mapping should be idempotent:
+        config.add_resource_mapping(new_mapping)
+        config.remove_resource_mapping(new_mapping)
+        config.remove_resource_mapping(new_mapping)
         assert len(config.resource_mappings) == len(default_mappings)
 
 
 def test_resource_manager():
     with asdf.config_context() as config:
+        # Initial resource manager should contain just the entry points resources:
         assert "http://stsci.edu/schemas/asdf/core/asdf-1.1.0" in config.resource_manager
         assert b"http://stsci.edu/schemas/asdf/core/asdf-1.1.0" in config.resource_manager["http://stsci.edu/schemas/asdf/core/asdf-1.1.0"]
         assert "http://somewhere.org/schemas/foo-1.0.0" not in config.resource_manager
 
-        config.add_resource_mapping({"http://somewhere.org/schemas/foo-1.0.0": b"foo"})
-
+        # Add a mapping and confirm that the manager now contains it:
+        new_mapping = {"http://somewhere.org/schemas/foo-1.0.0": b"foo"}
+        config.add_resource_mapping(new_mapping)
         assert "http://stsci.edu/schemas/asdf/core/asdf-1.1.0" in config.resource_manager
         assert b"http://stsci.edu/schemas/asdf/core/asdf-1.1.0" in config.resource_manager["http://stsci.edu/schemas/asdf/core/asdf-1.1.0"]
         assert "http://somewhere.org/schemas/foo-1.0.0" in config.resource_manager
         assert config.resource_manager["http://somewhere.org/schemas/foo-1.0.0"] == b"foo"
 
-        config.reset_resources()
-
+        # Remove a mapping and confirm that the manager no longer contains it:
+        config.remove_resource_mapping(new_mapping)
         assert "http://stsci.edu/schemas/asdf/core/asdf-1.1.0" in config.resource_manager
         assert b"http://stsci.edu/schemas/asdf/core/asdf-1.1.0" in config.resource_manager["http://stsci.edu/schemas/asdf/core/asdf-1.1.0"]
         assert "http://somewhere.org/schemas/foo-1.0.0" not in config.resource_manager
+
+        # Reset and confirm that the manager no longer contains the custom mapping:
+        config.add_resource_mapping(new_mapping)
+        config.reset_resources()
+        assert "http://stsci.edu/schemas/asdf/core/asdf-1.1.0" in config.resource_manager
+        assert b"http://stsci.edu/schemas/asdf/core/asdf-1.1.0" in config.resource_manager["http://stsci.edu/schemas/asdf/core/asdf-1.1.0"]
+        assert "http://somewhere.org/schemas/foo-1.0.0" not in config.resource_manager
+
+
+def test_extensions():
+    with asdf.config_context() as config:
+        original_extensions = config.extensions
+        assert any(isinstance(e.delegate, BuiltinExtension) for e in original_extensions)
+
+        class FooExtension:
+            types = []
+            tag_mapping = []
+            url_mapping = []
+        new_extension = FooExtension()
+
+        # Add an extension:
+        config.add_extension(new_extension)
+        assert len(config.extensions) == len(original_extensions) + 1
+        assert any(e for e in config.extensions if e.delegate is new_extension)
+
+        # Adding an extension should be idempotent:
+        config.add_extension(new_extension)
+        assert len(config.extensions) == len(original_extensions) + 1
+
+        # Even when wrapped:
+        config.add_extension(ExtensionProxy(new_extension))
+        assert len(config.extensions) == len(original_extensions) + 1
+
+        # Remove an extension:
+        config.remove_extension(new_extension)
+        assert len(config.extensions) == len(original_extensions)
+
+        # Removing should work when wrapped:
+        config.add_extension(new_extension)
+        config.remove_extension(ExtensionProxy(new_extension))
+        assert len(config.extensions) == len(original_extensions)
+
+        # Remove by the name of the extension's package:
+        config.add_extension(ExtensionProxy(new_extension, package_name="foo"))
+        config.add_extension(ExtensionProxy(FooExtension(), package_name="foo"))
+        config.remove_extension(package="foo")
+
+        # Removing an extension should be idempotent:
+        config.add_extension(new_extension)
+        config.remove_extension(new_extension)
+        config.remove_extension(new_extension)
+        assert len(config.extensions) == len(original_extensions)
+
+        # Resetting should get rid of any additions:
+        config.add_extension(new_extension)
+        config.add_extension(FooExtension())
+        config.reset_extensions()
+        assert len(config.extensions) == len(original_extensions)
+
+
+def test_config_repr():
+    with asdf.config_context() as config:
+        config.validate_on_read = True
+        config.default_version = "1.5.0"
+
+        assert "validate_on_read: True" in repr(config)
+        assert "default_version: 1.5.0" in repr(config)
