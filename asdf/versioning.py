@@ -161,11 +161,22 @@ supported_versions = [
     AsdfVersion('1.3.0'),
     AsdfVersion('1.4.0'),
     AsdfVersion('1.5.0'),
+    AsdfVersion('1.6.0'),
 ]
 
-default_version = supported_versions[-1]
+default_version = AsdfVersion('1.5.0')
 
 
 # This is the ASDF Standard version at which the format of the history
 # field changed to include extension metadata.
 NEW_HISTORY_FORMAT_MIN_VERSION = AsdfVersion("1.2.0")
+
+
+# This is the ASDF Standard version at which we begin restricting
+# mapping keys to string, integer, and boolean only.
+RESTRICTED_KEYS_MIN_VERSION = AsdfVersion("1.6.0")
+
+
+# This library never removed defaults for ASDF Standard versions
+# later than 1.5.0, so filling them isn't necessary.
+FILL_DEFAULTS_MAX_VERSION = AsdfVersion("1.5.0")

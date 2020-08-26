@@ -6,7 +6,6 @@ import re
 import struct
 import weakref
 from collections import namedtuple
-from urllib import parse as urlparse
 
 import numpy as np
 
@@ -19,6 +18,8 @@ from . import generic_io
 from . import treeutil
 from . import util
 from . import yamlutil
+
+from .util import patched_urllib_parse
 
 
 class BlockManager:
@@ -546,13 +547,13 @@ class BlockManager:
         """
         if uri is None:
             uri = ''
-        parts = list(urlparse.urlparse(uri))
+        parts = list(patched_urllib_parse.urlparse(uri))
         path = parts[2]
         dirname, filename = os.path.split(path)
         filename = self.get_external_filename(filename, index)
         path = os.path.join(dirname, filename)
         parts[2] = path
-        return urlparse.urlunparse(parts)
+        return patched_urllib_parse.urlunparse(parts)
 
     def _find_used_blocks(self, tree, ctx):
         reserved_blocks = set()
@@ -665,8 +666,7 @@ class BlockManager:
             raise ValueError("Block '{0}' not found.".format(source))
 
         elif isinstance(source, str):
-            asdffile = self._asdffile().open_external(
-                source, do_not_fill_defaults=True)
+            asdffile = self._asdffile().open_external(source)
             block = asdffile.blocks._internal_blocks[0]
             self.set_array_storage(block, 'external')
 
@@ -706,7 +706,7 @@ class BlockManager:
                         "Can't write external blocks, since URI of main file is "
                         "unknown.")
 
-                parts = list(urlparse.urlparse(self._asdffile().uri))
+                parts = list(patched_urllib_parse.urlparse(self._asdffile().uri))
                 path = parts[2]
                 filename = os.path.basename(path)
                 return self.get_external_filename(filename, i)

@@ -1,4 +1,5 @@
 import io
+from datetime import datetime
 
 from jsonschema import ValidationError
 import numpy as np
@@ -6,7 +7,7 @@ from numpy.testing import assert_array_equal
 import pytest
 
 import asdf
-from asdf import get_config
+from asdf import get_config, config_context
 from asdf import extension
 from asdf import resolver
 from asdf import schema
@@ -15,7 +16,7 @@ from asdf import util
 from asdf import yamlutil
 from asdf import tagged
 from asdf.tests import helpers, CustomExtension
-from asdf.exceptions import AsdfWarning, AsdfConversionWarning
+from asdf.exceptions import AsdfWarning, AsdfConversionWarning, AsdfDeprecationWarning
 
 
 class TagReferenceType(types.CustomType):
@@ -164,28 +165,41 @@ required: [foobar]
 
 
 def test_load_schema_with_asdf_uri_scheme():
+    subschema_content="""%YAML 1.1
+---
+$schema: http://stsci.edu/schemas/asdf/asdf-schema-1.0.0
+id: asdf://somewhere.org/schemas/bar
+
+bar:
+  type: string
+...
+"""
     content = """%YAML 1.1
 ---
 $schema: http://stsci.edu/schemas/asdf/asdf-schema-1.0.0
 id: asdf://somewhere.org/schemas/foo
 
 definitions:
-  bar:
+  local_bar:
     type: string
 
 type: object
 properties:
-  id:
-    type: string
   bar:
-    $ref: #/definitions/bar
+    $ref: asdf://somewhere.org/schemas/bar#/bar
+  local_bar:
+    $ref: '#/definitions/local_bar'
 ...
 """
     with asdf.config_context() as config:
         config.add_resource_mapping({"asdf://somewhere.org/schemas/foo": content})
+        config.add_resource_mapping({"asdf://somewhere.org/schemas/bar": subschema_content})
 
-        schema_tree = schema.load_schema("asdf://somewhere.org/schemas/foo", resolve_references=True)
-        schema.check_schema(schema_tree)
+        schema_tree = schema.load_schema("asdf://somewhere.org/schemas/foo")
+        instance = {"bar": "baz", "local_bar": "foz"}
+        schema.validate(instance, schema=schema_tree)
+        with pytest.raises(ValidationError):
+            schema.validate({"bar": 12}, schema=schema_tree)
 
 
 def test_schema_caching():
@@ -448,37 +462,51 @@ custom: !<tag:nowhere.org:custom/default-1.0.0>
         assert ff.tree['custom']['j']['l'] == 362
 
     buff.seek(0)
-    with asdf.open(buff, extensions=[DefaultTypeExtension()],
-                            do_not_fill_defaults=True) as ff:
-        assert 'a' not in ff.tree['custom']
-        assert 'c' not in ff.tree['custom']['b']
-        assert 'e' not in ff.tree['custom']['d']
-        assert 'f' not in ff.tree['custom']['d']
-        assert 'h' not in ff.tree['custom']['g']
-        assert 'i' not in ff.tree['custom']['g']
-        assert 'k' not in ff.tree['custom']['j']
-        assert ff.tree['custom']['j']['l'] == 362
-        ff.fill_defaults()
-        assert 'a' in ff.tree['custom']
-        assert ff.tree['custom']['a'] == 42
-        assert 'c' in ff.tree['custom']['b']
-        assert ff.tree['custom']['b']['c'] == 82
-        assert ff.tree['custom']['b']['c'] == 82
-        assert ff.tree['custom']['d']['e'] == 122
-        assert ff.tree['custom']['d']['f'] == 162
-        assert 'h' not in ff.tree['custom']['g']
-        assert 'i' not in ff.tree['custom']['g']
-        assert 'k' not in ff.tree['custom']['j']
-        assert ff.tree['custom']['j']['l'] == 362
-        ff.remove_defaults()
-        assert 'a' not in ff.tree['custom']
-        assert 'c' not in ff.tree['custom']['b']
-        assert 'e' not in ff.tree['custom']['d']
-        assert 'f' not in ff.tree['custom']['d']
-        assert 'h' not in ff.tree['custom']['g']
-        assert 'i' not in ff.tree['custom']['g']
-        assert 'k' not in ff.tree['custom']['j']
-        assert ff.tree['custom']['j']['l'] == 362
+    with pytest.warns(AsdfDeprecationWarning, match='do_not_fill_defaults'):
+        with asdf.open(buff, extensions=[DefaultTypeExtension()],
+                                do_not_fill_defaults=True) as ff:
+            assert 'a' not in ff.tree['custom']
+            assert 'c' not in ff.tree['custom']['b']
+            assert 'e' not in ff.tree['custom']['d']
+            assert 'f' not in ff.tree['custom']['d']
+            assert 'h' not in ff.tree['custom']['g']
+            assert 'i' not in ff.tree['custom']['g']
+            assert 'k' not in ff.tree['custom']['j']
+            assert ff.tree['custom']['j']['l'] == 362
+            ff.fill_defaults()
+            assert 'a' in ff.tree['custom']
+            assert ff.tree['custom']['a'] == 42
+            assert 'c' in ff.tree['custom']['b']
+            assert ff.tree['custom']['b']['c'] == 82
+            assert ff.tree['custom']['b']['c'] == 82
+            assert ff.tree['custom']['d']['e'] == 122
+            assert ff.tree['custom']['d']['f'] == 162
+            assert 'h' not in ff.tree['custom']['g']
+            assert 'i' not in ff.tree['custom']['g']
+            assert 'k' not in ff.tree['custom']['j']
+            assert ff.tree['custom']['j']['l'] == 362
+            ff.remove_defaults()
+            assert 'a' not in ff.tree['custom']
+            assert 'c' not in ff.tree['custom']['b']
+            assert 'e' not in ff.tree['custom']['d']
+            assert 'f' not in ff.tree['custom']['d']
+            assert 'h' not in ff.tree['custom']['g']
+            assert 'i' not in ff.tree['custom']['g']
+            assert 'k' not in ff.tree['custom']['j']
+            assert ff.tree['custom']['j']['l'] == 362
+
+    buff.seek(0)
+    with config_context() as config:
+        config.legacy_fill_schema_defaults = False
+        with asdf.open(buff, extensions=[DefaultTypeExtension()]) as ff:
+            assert 'a' not in ff.tree['custom']
+            assert 'c' not in ff.tree['custom']['b']
+            assert 'e' not in ff.tree['custom']['d']
+            assert 'f' not in ff.tree['custom']['d']
+            assert 'h' not in ff.tree['custom']['g']
+            assert 'i' not in ff.tree['custom']['g']
+            assert 'k' not in ff.tree['custom']['j']
+            assert ff.tree['custom']['j']['l'] == 362
 
 
 def test_one_of():
@@ -611,6 +639,13 @@ def test_large_literals(use_numpy):
         asdf.AsdfFile(tree)
 
     tree = {
+        largeval: 'large_key',
+    }
+
+    with pytest.raises(ValidationError):
+        asdf.AsdfFile(tree)
+
+    tree = {
         'large_array': np.array([largeval], np.uint64)
     }
 
@@ -626,15 +661,54 @@ def test_large_literals(use_numpy):
 
 
 def test_read_large_literal():
-
     value = 1 << 64
-    yaml = """integer: {}""".format(value)
+    yaml = f"integer: {value}"
 
     buff = helpers.yaml_to_asdf(yaml)
 
     with pytest.warns(AsdfWarning, match="Invalid integer literal value"):
         with asdf.open(buff) as af:
             assert af['integer'] == value
+
+    yaml = f"{value}: foo"
+
+    buff = helpers.yaml_to_asdf(yaml)
+
+    with pytest.warns(AsdfWarning, match="Invalid integer literal value"):
+        with asdf.open(buff) as af:
+            assert af[value] == "foo"
+
+
+@pytest.mark.parametrize(
+    "version,keys",
+    [
+        ("1.6.0", ["foo", 42, True]),
+        ("1.5.0", ["foo", 42, True, 3.14159, datetime.now(), b"foo", None]),
+    ]
+)
+def test_mapping_supported_key_types(keys, version):
+    for key in keys:
+        with helpers.assert_no_warnings():
+            af = asdf.AsdfFile({key: "value"}, version=version)
+            buff = io.BytesIO()
+            af.write_to(buff)
+            buff.seek(0)
+            with asdf.open(buff) as af:
+                assert af[key] == "value"
+
+
+@pytest.mark.parametrize(
+    "version,keys",
+    [
+        ("1.6.0", [3.14159, datetime.now(), b"foo", None, ("foo", "bar")]),
+    ]
+)
+def test_mapping_unsupported_key_types(keys, version):
+    for key in keys:
+        with pytest.raises(ValidationError, match="Mapping key .* is not permitted"):
+            af = asdf.AsdfFile({key: "value"}, version=version)
+            buff = io.BytesIO()
+            af.write_to(buff)
 
 
 def test_nested_array():
@@ -1045,3 +1119,37 @@ def test_validator_visit_repeat_nodes():
     )
     validator.validate(tree)
     assert len(visited_nodes) == 3
+
+
+def test_tag_validator():
+    content="""%YAML 1.1
+---
+$schema: http://stsci.edu/schemas/asdf/asdf-schema-1.0.0
+id: asdf://somewhere.org/schemas/foo
+tag: asdf://somewhere.org/tags/foo
+...
+"""
+    with asdf.config_context() as config:
+        config.add_resource_mapping({"asdf://somewhere.org/schemas/foo": content})
+
+        schema_tree = schema.load_schema("asdf://somewhere.org/schemas/foo")
+        instance = tagged.TaggedDict(tag="asdf://somewhere.org/tags/foo")
+        schema.validate(instance, schema=schema_tree)
+        with pytest.raises(ValidationError):
+            schema.validate(tagged.TaggedDict(tag="asdf://somewhere.org/tags/bar"), schema=schema_tree)
+
+    content="""%YAML 1.1
+---
+$schema: http://stsci.edu/schemas/asdf/asdf-schema-1.0.0
+id: asdf://somewhere.org/schemas/bar
+tag: asdf://somewhere.org/tags/bar-*
+...
+"""
+    with asdf.config_context() as config:
+        config.add_resource_mapping({"asdf://somewhere.org/schemas/bar": content})
+
+        schema_tree = schema.load_schema("asdf://somewhere.org/schemas/bar")
+        instance = tagged.TaggedDict(tag="asdf://somewhere.org/tags/bar-2.5")
+        schema.validate(instance, schema=schema_tree)
+        with pytest.raises(ValidationError):
+            schema.validate(tagged.TaggedDict(tag="asdf://somewhere.org/tags/foo-1.0"), schema=schema_tree)

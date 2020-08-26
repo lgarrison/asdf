@@ -9,7 +9,30 @@
 - Drop support for automatic serialization of subclass
   attributes. [#825]
 
-- Support asdf:// as a URI scheme. [#854]
+- Support asdf:// as a URI scheme. [#854, #855]
+
+- Include only extensions used during serialization in
+  a file's metadata. [#848, #864]
+
+- Drop support for Python 3.5. [#856]
+
+- Add new extension API to support versioned extensions.
+  [#850, #851, #853, #857]
+
+- Permit wildcard in tag validator URIs. [#858, #865]
+
+- Implement support for ASDF Standard 1.6.0.  This version of
+  the standard limits mapping keys to string, integer, or
+  boolean. [#866]
+
+- Stop removing schema defaults for all ASDF Standard versions,
+  and automatically fill defaults only for versions <= 1.5.0. [#860]
+
+2.7.1 (2020-08-18)
+------------------
+
+- Fix bug preventing access to copied array data after
+  ``AsdfFile`` is closed. [#869]
 
 2.7.0 (2020-07-23)
 ------------------

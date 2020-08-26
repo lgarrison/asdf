@@ -196,10 +196,12 @@ class AsdfInFits(asdf.AsdfFile):
             If `True`, validate the blocks against their checksums.
             Requires reading the entire file, so disabled by default.
 
-        extensions : list of AsdfExtension, optional
-            A list of extensions to the ASDF to support when reading
-            and writing ASDF files.  See `asdf.types.AsdfExtension` for
-            more information.
+        extensions : object, optional
+            Additional extensions to use when reading and writing the file.
+            May be any of the following: `asdf.extension.AsdfExtension`,
+            `asdf.extension.Extension`, `str` extension URI,
+            `asdf.extension.AsdfExtensionList` or a `list` of URIs and/or
+            extensions.
 
         ignore_version_mismatch : bool, optional
             When `True`, do not raise warnings for mismatched schema versions.
@@ -250,7 +252,7 @@ class AsdfInFits(asdf.AsdfFile):
                 msg = "Failed to parse given file '{}'. Is it FITS?"
                 raise ValueError(msg.format(uri))
 
-        self = cls(hdulist, uri=uri, extensions=extensions,
+        self = cls(hdulist, uri=uri,
                    ignore_version_mismatch=ignore_version_mismatch,
                    ignore_unrecognized_tag=ignore_unrecognized_tag)
 
@@ -267,6 +269,7 @@ class AsdfInFits(asdf.AsdfFile):
         try:
             return cls._open_asdf(self, buff, uri=uri, mode='r',
                               validate_checksums=validate_checksums,
+                              extensions=extensions,
                               strict_extension_check=strict_extension_check,
                               ignore_missing_extensions=ignore_missing_extensions,
                               **kwargs)

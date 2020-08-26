@@ -133,8 +133,6 @@ def test_get_history_entries(tmpdir):
 def test_extension_metadata(tmpdir):
 
     ff = asdf.AsdfFile()
-    # No extensions used yet:
-    assert len(ff.type_index.get_extensions_used()) == 0
 
     tmpfile = str(tmpdir.join('extension.asdf'))
     ff.write_to(tmpfile)
@@ -161,7 +159,7 @@ history:
     """
 
     buff = yaml_to_asdf(yaml)
-    with pytest.warns(AsdfWarning, match="File was created with extension 'foo.bar.FooBar'"):
+    with pytest.warns(AsdfWarning, match="File was created with extension class 'foo.bar.FooBar'"):
         with asdf.open(buff):
             pass
 
@@ -179,7 +177,7 @@ history:
     """
 
     buff = yaml_to_asdf(yaml)
-    with pytest.warns(AsdfWarning, match="File was created with extension 'asdf.extension.BuiltinExtension'"):
+    with pytest.warns(AsdfWarning, match="File was created with extension class 'asdf.extension.BuiltinExtension'"):
         with asdf.open(buff):
             pass
 

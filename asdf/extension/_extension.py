@@ -1,8 +1,91 @@
+import abc
+
+from packaging.specifiers import SpecifierSet
+
 from ..util import get_class_name
+from ._tag import TagDefinition
 from ._legacy import AsdfExtension
+from ._converter import ConverterProxy
 
 
-class ExtensionProxy(AsdfExtension):
+class Extension(abc.ABC):
+    """
+    Abstract base class defining an extension to ASDF.
+
+    Implementing classes must provide the `extension_uri`.
+    Other properties are optional.
+    """
+    @classmethod
+    def __subclasshook__(cls, C):
+        if cls is Extension:
+            return hasattr(C, "extension_uri")
+        return NotImplemented # pragma: no cover
+
+    @abc.abstractproperty
+    def extension_uri(self):
+        """
+        Get the URI of the extension to the ASDF Standard implemented
+        by this class.  Note that this may not uniquely identify the
+        class itself.
+
+        Returns
+        -------
+        str
+        """
+        pass # pragma: no cover
+
+    @property
+    def legacy_class_names(self):
+        """
+        Get the set of fully-qualified class names used by older
+        versions of this extension.  This allows a new-style
+        implementation of an extension to prevent warnings when a
+        legacy extension is missing.
+
+        Returns
+        -------
+        iterable of str
+        """
+        return set()
+
+    @property
+    def asdf_standard_requirement(self):
+        """
+        Get the ASDF Standard version requirement for this extension.
+
+        Returns
+        -------
+        str or None
+            If str, PEP 440 version specifier.
+            If None, support all versions.
+        """
+        return None
+
+    @property
+    def converters(self):
+        """
+        Get the `asdf.extension.Converter` instances for tags
+        and Python types supported by this extension.
+
+        Returns
+        -------
+        iterable of asdf.extension.Converter
+        """
+        return []
+
+    @property
+    def tags(self):
+        """
+        Get the YAML tags supported by this extension.
+
+        Returns
+        -------
+        iterable of str or asdf.extension.TagDefinition
+        """
+        return []
+
+
+class ExtensionProxy(Extension, AsdfExtension):
     """
     Proxy that wraps an extension, provides default implementations
     of optional methods, and carries additional information on the
@@ -16,8 +99,10 @@ class ExtensionProxy(AsdfExtension):
             return ExtensionProxy(delegate)
 
     def __init__(self, delegate, package_name=None, package_version=None):
-        if not isinstance(delegate, AsdfExtension):
-            raise TypeError("Extension must implement the AsdfExtension interface")
+        if not isinstance(delegate, (Extension, AsdfExtension)):
+            raise TypeError(
+                "Extension must implement the Extension or AsdfExtension interface"
+            )
 
         self._delegate = delegate
         self._package_name = package_name
@@ -25,7 +110,102 @@ class ExtensionProxy(AsdfExtension):
 
         self._class_name = get_class_name(delegate)
 
-        self._legacy = True
+        self._legacy = isinstance(delegate, AsdfExtension)
+
+        # Sort these out up-front so that errors are raised when the extension is loaded
+        # and not in the middle of the user's session.  The extension will fail to load
+        # and a warning will be emitted, but it won't crash the program.
+
+        self._legacy_class_names = set()
+        for class_name in getattr(self._delegate, "legacy_class_names", []):
+            if isinstance(class_name, str):
+                self._legacy_class_names.add(class_name)
+            else:
+                raise TypeError("Extension property 'legacy_class_names' must contain str values")
+
+        if self._legacy:
+            self._legacy_class_names.add(self._class_name)
+
+        value = getattr(self._delegate, "asdf_standard_requirement", None)
+        if isinstance(value, str):
+            self._asdf_standard_requirement = SpecifierSet(value)
+        elif value is None:
+            self._asdf_standard_requirement = SpecifierSet()
+        else:
+            raise TypeError("Extension property 'asdf_standard_requirement' must be str or None")
+
+        self._tags = []
+        for tag in getattr(self._delegate, "tags", []):
+            if isinstance(tag, str):
+                self._tags.append(TagDefinition(tag))
+            elif isinstance(tag, TagDefinition):
+                self._tags.append(tag)
+            else:
+                raise TypeError("Extension property 'tags' must contain str or asdf.extension.TagDefinition values")
+
+        # Process the converters last, since they expect ExtensionProxy
+        # properties to already be available.
+        self._converters = [ConverterProxy(c, self) for c in getattr(self._delegate, "converters", [])]
+
+    @property
+    def extension_uri(self):
+        """
+        Get the URI of the extension to the ASDF Standard implemented
+        by this class.  Note that this may not uniquely identify the
+        class itself.
+
+        Returns
+        -------
+        str or None
+        """
+        return getattr(self._delegate, "extension_uri", None)
+
+    @property
+    def legacy_class_names(self):
+        """
+        Get the set of fully-qualified class names used by older
+        versions of this extension.  This allows a new-style
+        implementation of an extension to prevent warnings when a
+        legacy extension is missing.
+
+        Returns
+        -------
+        set of str
+        """
+        return self._legacy_class_names
+
+    @property
+    def asdf_standard_requirement(self):
+        """
+        Get the extension's ASDF Standard requirement.
+
+        Returns
+        -------
+        packaging.specifiers.SpecifierSet
+        """
+        return self._asdf_standard_requirement
+
+    @property
+    def converters(self):
+        """
+        Get the extension's converters.
+
+        Returns
+        -------
+        list of asdf.extension.Converter
+        """
+        return self._converters
+
+    @property
+    def tags(self):
+        """
+        Get the YAML tags supported by this extension.
+
+        Returns
+        -------
+        list of asdf.extension.TagDefinition
+        """
+        return self._tags
 
     @property
     def types(self):
@@ -67,7 +247,7 @@ class ExtensionProxy(AsdfExtension):
 
         Returns
         -------
-        asdf.extension.AsdfExtension
+        asdf.extension.Extension or asdf.extension.AsdfExtension
         """
         return self._delegate
 
