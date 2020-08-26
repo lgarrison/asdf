@@ -5,7 +5,7 @@ import copy
 from numbers import Integral
 from functools import lru_cache
 from collections import OrderedDict
-from urllib import parse as urlparse
+from collections.abc import Mapping
 
 from jsonschema import validators as mvalidators
 from jsonschema.exceptions import ValidationError
@@ -21,7 +21,11 @@ from . import treeutil
 from . import util
 from . import extension
 from . import yamlutil
+from . import versioning
+from . import tagged
 from .exceptions import AsdfDeprecationWarning, AsdfWarning
+
+from .util import patched_urllib_parse
 
 
 YAML_SCHEMA_METASCHEMA_ID = 'http://stsci.edu/schemas/yaml-schema/draft-01'
@@ -75,18 +79,29 @@ def _type_to_tag(type_):
     return None
 
 
-def validate_tag(validator, tagname, instance, schema):
-
+def validate_tag(validator, tag_pattern, instance, schema):
+    """
+    Implements the tag validation directive, which checks the
+    tag against a pattern that may include wildcards.  See
+    `asdf.util.uri_match` for details on the matching behavior.
+    """
     if hasattr(instance, '_tag'):
         instance_tag = instance._tag
     else:
         # Try tags for known Python builtins
         instance_tag = _type_to_tag(type(instance))
 
-    if instance_tag is not None and instance_tag != tagname:
+    if instance_tag is None:
+        yield ValidationError(
+            "mismatched tags, wanted '{}', got unhandled object type '{}'".format(
+                tag_pattern, util.get_class_name(instance)
+            )
+        )
+
+    if not util.uri_match(tag_pattern, instance_tag):
         yield ValidationError(
             "mismatched tags, wanted '{0}', got '{1}'".format(
-                tagname, instance_tag))
+                tag_pattern, instance_tag))
 
 
 def validate_propertyOrder(validator, order, instance, schema):
@@ -291,18 +306,26 @@ def _create_validator(validators=YAML_VALIDATORS, visit_repeat_nodes=False):
                 if _schema is None:
                     tag = getattr(instance, '_tag', None)
                     if tag is not None:
-                        schema_path = self.ctx.resolver(tag)
-                        if schema_path != tag:
+                        if self.serialization_context.extension_manager.handles_tag(tag):
+                            tag_def = self.serialization_context.extension_manager.get_tag_definition(tag)
+                            schema_uri = tag_def.schema_uri
+                        else:
+                            schema_uri = self.ctx.tag_mapping(tag)
+                            if schema_uri == tag:
+                                schema_uri = None
+
+                        if schema_uri is not None:
                             try:
-                                s = _load_schema_cached(schema_path, self.ctx.resolver, False, False)
+                                s = _load_schema_cached(schema_uri, self.ctx.resolver, False, False)
                             except FileNotFoundError:
                                 msg = "Unable to locate schema file for '{}': '{}'"
-                                warnings.warn(msg.format(tag, schema_path), AsdfWarning)
+                                warnings.warn(msg.format(tag, schema_uri), AsdfWarning)
                                 s = {}
                             if s:
-                                with self.resolver.in_scope(schema_path):
+                                with self.resolver.in_scope(schema_uri):
                                     for x in super(ASDFValidator, self).iter_errors(instance, s):
                                         yield x
+
 
                     if isinstance(instance, dict):
                         for val in instance.values():
@@ -356,15 +379,24 @@ def _make_resolver(url_mapping):
     def get_schema(url):
         return schema_loader(url)[0]
 
-    for x in ['http', 'https', 'file', 'tag']:
+    for x in ['http', 'https', 'file', 'tag', 'asdf']:
         handlers[x] = get_schema
+
+    # Supplying our own implementation of urljoin_cache
+    # allows asdf:// URIs to be resolved correctly.
+    urljoin_cache = lru_cache(1024)(patched_urllib_parse.urljoin)
 
     # We set cache_remote=False here because we do the caching of
     # remote schemas here in `load_schema`, so we don't need
     # jsonschema to do it on our behalf.  Setting it to `True`
     # counterintuitively makes things slower.
     return mvalidators.RefResolver(
-        '', {}, cache_remote=False, handlers=handlers)
+        '',
+        {},
+        cache_remote=False,
+        handlers=handlers,
+        urljoin_cache=urljoin_cache,
+    )
 
 
 @lru_cache()
@@ -433,7 +465,7 @@ def _load_schema_cached(url, resolver, resolve_references, resolve_local_refs):
             if isinstance(node, dict) and '$ref' in node:
                 ref_url = resolver(node['$ref'])
                 if ref_url.startswith('#'):
-                    parts = urlparse.urlparse(ref_url)
+                    parts = patched_urllib_parse.urlparse(ref_url)
                     subschema_fragment = reference.resolve_fragment(
                         schema, parts.fragment)
                     return subschema_fragment
@@ -447,7 +479,7 @@ def _load_schema_cached(url, resolver, resolve_references, resolve_local_refs):
                 json_id = url
             if isinstance(node, dict) and '$ref' in node:
                 suburl = generic_io.resolve_uri(json_id, resolver(node['$ref']))
-                parts = urlparse.urlparse(suburl)
+                parts = patched_urllib_parse.urlparse(suburl)
                 fragment = parts.fragment
                 if len(fragment):
                     suburl_path = suburl[:-(len(fragment) + 1)]
@@ -471,7 +503,8 @@ def _load_schema_cached(url, resolver, resolve_references, resolve_local_refs):
 
 
 def get_validator(schema={}, ctx=None, validators=None, url_mapping=None,
-                  *args, _visit_repeat_nodes=False, **kwargs):
+                  *args, _visit_repeat_nodes=False, _serialization_context=None,
+                  **kwargs):
     """
     Get a JSON schema validator object for the given schema.
 
@@ -509,6 +542,9 @@ def get_validator(schema={}, ctx=None, validators=None, url_mapping=None,
         from .asdf import AsdfFile
         ctx = AsdfFile()
 
+    if _serialization_context is None:
+        _serialization_context = ctx._create_serialization_context()
+
     if validators is None:
         validators = util.HashableDict(YAML_VALIDATORS.copy())
         validators.update(ctx.extension_list.validators)
@@ -523,33 +559,63 @@ def get_validator(schema={}, ctx=None, validators=None, url_mapping=None,
     cls = _create_validator(validators=validators, visit_repeat_nodes=_visit_repeat_nodes)
     validator = cls(schema, *args, **kwargs)
     validator.ctx = ctx
+    validator.serialization_context = _serialization_context
     return validator
 
 
-def validate_large_literals(instance, reading=False):
+def _validate_large_literals(instance, reading):
     """
     Validate that the tree has no large numeric literals.
     """
-    # We can count on 52 bits of precision
-    for instance in treeutil.iter_tree(instance):
+    def _validate(value):
+        # We can count on 52 bits of precision
+        if value <= ((1 << 51) - 1) and value >= -((1 << 51) - 2):
+            return
 
-        if not isinstance(instance, Integral):
-            continue
-
-        if instance <= ((1 << 51) - 1) and instance >= -((1 << 51) - 2):
-            continue
-
-        if not reading:
+        if reading:
+            warnings.warn(
+                f"Invalid integer literal value {value} detected while reading file. "
+                "The value has been read safely, but the file should be "
+                "fixed.",
+                AsdfWarning
+            )
+        else:
             raise ValidationError(
-                "Integer value {0} is too large to safely represent as a "
-                "literal in ASDF".format(instance))
+                f"Integer value {value} is too large to safely represent as a "
+                "literal in ASDF"
+            )
 
-        warnings.warn(
-            "Invalid integer literal value {0} detected while reading file. "
-            "The value has been read safely, but the file should be "
-            "fixed.".format(instance),
-            AsdfWarning
-        )
+    if isinstance(instance, Integral):
+        _validate(instance)
+    elif isinstance(instance, Mapping):
+        for key in instance:
+            if isinstance(key, Integral):
+                _validate(key)
+
+
+def _validate_mapping_keys(instance, reading):
+    """
+    Validate that mappings do not contain illegal key types
+    (as of ASDF Standard 1.6.0, only str, int, and bool are
+    permitted).
+    """
+    if not isinstance(instance, Mapping):
+        return
+
+    for key in instance:
+        if isinstance(key, tagged.Tagged) or not isinstance(key, (str, int, bool)):
+            if reading:
+                warnings.warn(
+                    f"Invalid mapping key {key} detected while reading file. "
+                    "The value has been read safely, but the file should be "
+                    "fixed.",
+                    AsdfWarning
+                )
+            else:
+                raise ValidationError(
+                    f"Mapping key {key} is not permitted.  Valid types: "
+                    "str, int, bool."
+                )
 
 
 def validate(instance, ctx=None, schema={}, validators=None, reading=False,
@@ -590,7 +656,15 @@ def validate(instance, ctx=None, schema={}, validators=None, reading=False,
                               *args, **kwargs)
     validator.validate(instance, _schema=(schema or None))
 
-    validate_large_literals(instance, reading=reading)
+    additional_validators = [_validate_large_literals]
+    if ctx.version >= versioning.RESTRICTED_KEYS_MIN_VERSION:
+        additional_validators.append(_validate_mapping_keys)
+
+    def _callback(instance):
+        for validator in additional_validators:
+            validator(instance, reading)
+
+    treeutil.walk(instance, _callback)
 
 
 def fill_defaults(instance, ctx, reading=False):

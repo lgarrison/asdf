@@ -11,12 +11,15 @@ from .resource import ResourceMappingProxy, ResourceManager
 from . import versioning
 from ._helpers import validate_version
 from .extension import ExtensionProxy
+from . import util
+
 
 __all__ = ["AsdfConfig", "get_config", "config_context"]
 
 
 DEFAULT_VALIDATE_ON_READ = True
 DEFAULT_DEFAULT_VERSION = str(versioning.default_version)
+DEFAULT_LEGACY_FILL_SCHEMA_DEFAULTS = True
 
 
 class AsdfConfig:
@@ -32,6 +35,7 @@ class AsdfConfig:
         self._extensions = None
         self._validate_on_read = DEFAULT_VALIDATE_ON_READ
         self._default_version = DEFAULT_DEFAULT_VERSION
+        self._legacy_fill_schema_defaults = DEFAULT_LEGACY_FILL_SCHEMA_DEFAULTS
 
         self._lock = threading.RLock()
 
@@ -83,16 +87,26 @@ class AsdfConfig:
         mapping : collections.abc.Mapping, optional
             Mapping to remove.
         package : str, optional
-            Python package whose mappings will all be removed.
+            Remove only extensions provided by this package.  If the `mapping`
+            argument is omitted, then all mappings from this package will
+            be removed.
         """
-        with self._lock:
-            resource_mappings = self.resource_mappings
-            if mapping is not None:
+        if mapping is None and package is None:
+            raise ValueError("Must specify at least one of mapping or package")
+
+        if mapping is not None:
                 mapping = ResourceMappingProxy.maybe_wrap(mapping)
-                resource_mappings = [m for m in resource_mappings if m != mapping]
+
+        def _remove_condition(m):
+            result = True
+            if mapping is not None:
+                result = result and m == mapping
             if package is not None:
-                resource_mappings = [m for m in resource_mappings if m.package_name != package]
-            self._resource_mappings = resource_mappings
+                result = result and m.package_name == package
+            return result
+
+        with self._lock:
+            self._resource_mappings = [m for m in self.resource_mappings if not _remove_condition(m)]
             self._resource_manager = None
 
     def reset_resources(self):
@@ -127,7 +141,7 @@ class AsdfConfig:
 
         Returns
         -------
-        list of asdf.extension.AsdfExtension
+        list of asdf.extension.AsdfExtension or asdf.extension.Extension
         """
         if self._extensions is None:
             with self._lock:
@@ -142,7 +156,7 @@ class AsdfConfig:
 
         Parameters
         ----------
-        extension : asdf.extension.AsdfExtension
+        extension : asdf.extension.AsdfExtension or asdf.extension.Extension
         """
         with self._lock:
             extension = ExtensionProxy.maybe_wrap(extension)
@@ -154,19 +168,58 @@ class AsdfConfig:
 
         Parameters
         ----------
-        extension : asdf.extension.AsdfExtension, optional
-            An extension instance to remove.
+        extension : asdf.extension.AsdfExtension or asdf.extension.Extension or str, optional
+            An extension instance or URI pattern to remove.
         package : str, optional
-            A Python package name whose extensions will all be removed.
+            Remove only extensions provided by this package.  If the `extension`
+            argument is omitted, then all extensions from this package will
+            be removed.
         """
-        with self._lock:
-            extensions = self.extensions
-            if extension is not None:
-                extension = ExtensionProxy.maybe_wrap(extension)
-                extensions = [e for e in extensions if e != extension]
+        if extension is None and package is None:
+            raise ValueError("Must specify at least one of extension or package")
+
+        if extension is not None and not isinstance(extension, str):
+            extension = ExtensionProxy.maybe_wrap(extension)
+
+        def _remove_condition(e):
+            result = True
+
+            if isinstance(extension, str):
+                result = result and util.uri_match(extension, e.extension_uri)
+            elif isinstance(extension, ExtensionProxy):
+                result = result and e == extension
+
             if package is not None:
-                extensions = [e for e in extensions if e.package_name != package]
-            self._extensions = extensions
+                result = result and e.package_name == package
+
+            return result
+
+        with self._lock:
+            self._extensions = [e for e in self.extensions if not _remove_condition(e)]
+
+    def get_extension(self, extension_uri):
+        """
+        Get an extension by URI.
+
+        Parameters
+        ----------
+        extension_uri : str
+            The URI of the extension to fetch.
+
+        Returns
+        -------
+        asdf.extension.AsdfExtension or asdf.extension.Extension
+
+        Raises
+        ------
+        KeyError
+            If no such extension exists.
+        """
+        for extension in self.extensions:
+            if extension.extension_uri == extension_uri:
+                return extension
+
+        raise KeyError("No registered extension with URI '{}'".format(extension_uri))
 
     def reset_extensions(self):
         """
@@ -224,15 +277,45 @@ class AsdfConfig:
         """
         self._default_version = validate_version(value)
 
+    @property
+    def legacy_fill_schema_defaults(self):
+        """
+        Get the configuration that controls filling defaults
+        from schemas for older ASDF Standard versions.  If
+        `True`, missing default values will be filled from the
+        schema when reading files from ASDF Standard <= 1.5.0.
+        Later versions of the standard do not support removing
+        or filling schema defaults.
+
+        Returns
+        -------
+        bool
+        """
+        return self._legacy_fill_schema_defaults
+
+    @legacy_fill_schema_defaults.setter
+    def legacy_fill_schema_defaults(self, value):
+        """
+        Set the flag that controls filling defaults from
+        schemas for older ASDF Standard versions.
+
+        Parameters
+        ----------
+        value : bool
+        """
+        self._legacy_fill_schema_defaults = value
+
     def __repr__(self):
         return (
             "<AsdfConfig\n"
             "  validate_on_read: {}\n"
             "  default_version: {}\n"
+            "  legacy_fill_schema_defaults: {}\n"
             ">"
         ).format(
             self.validate_on_read,
             self.default_version,
+            self.legacy_fill_schema_defaults,
         )
 
 
